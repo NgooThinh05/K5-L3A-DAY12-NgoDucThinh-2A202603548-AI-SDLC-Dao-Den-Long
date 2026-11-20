@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Đảo Đèn Lồng — Đêm 1: Đảo Bến</title>
+    <link rel="stylesheet" href="/src/web/style.css" />
+  </head>
+  <body>
+    <div id="canvas-container"></div>
+
+    <!-- HUD Overlay -->
+    <div id="hud" class="hud hidden">
+      <div class="hud-top-left">
+        <div class="hud-card">
+          <div class="hud-label">Ngọn Lửa (Máu)</div>
+          <div id="hud-flames" class="flames-row"></div>
+        </div>
+        <div class="hud-card">
+          <div class="hud-label">Đom Đóm</div>
+          <div class="hud-value"><span id="hud-carried">0</span> / <span id="hud-cap">10</span></div>
+        </div>
+        <div class="hud-card">
+          <div class="hud-label">Đèn Lồng Lớn</div>
+          <div class="hud-value"><span id="hud-lanterns">0</span> / <span id="hud-lantern-total">5</span></div>
+        </div>
+      </div>
+
+      <div class="hud-top-right">
+        <div class="hud-card">
+          <div class="hud-label">Thời gian Đêm 1</div>
+          <div id="hud-time" class="hud-value mono">05:00</div>
+        </div>
+        <div class="hud-card">
+          <div class="hud-label">Điểm số</div>
+          <div id="hud-score" class="hud-value mono gold">0</div>
+        </div>
+        <div class="hud-card pulse-card">
+          <div class="hud-label">Tỏa Sáng (Q / Shift)</div>
+          <div id="hud-pulse-status" class="pulse-status">Cần 2 đom đóm</div>
+          <div class="pulse-bar-bg">
+            <div id="hud-pulse-bar" class="pulse-bar-fill"></div>
+          </div>
+        </div>
+      </div>
+
+      <div id="interact-prompt" class="interact-prompt hidden">
+        Nhấn <kbd>E</kbd> để thắp <span id="prompt-lantern-id">L1</span> (<span id="prompt-progress">0/5</span>)
+      </div>
+
+      <div class="hud-bottom">
+        <span><kbd>WASD</kbd> Di chuyển</span>
+        <span><kbd>Kéo chuột</kbd> / <kbd>← →</kbd> Xoay camera</span>
+        <span><kbd>Space</kbd> Nhảy</span>
+        <span><kbd>E</kbd> Thắp đèn</span>
+        <span><kbd>Q</kbd> / <kbd>Shift</kbd> Tỏa sáng</span>
+        <span><kbd>M</kbd> <span id="audio-label">Âm thanh: Bật</span></span>
+      </div>
+    </div>
+
+    <!-- Start Overlay -->
+    <div id="start-overlay" class="modal-backdrop">
+      <div class="modal-card">
+        <div class="modal-badge">ĐÊM 1 · ĐẢO BẾN</div>
+        <h1 class="modal-title">Đảo Đèn Lồng</h1>
+        <p class="modal-desc">
+          Cùng <strong>Mây</strong> thu thập <strong>đom đóm</strong> giữa biển mây,
+          thắp sáng cả <strong>5 Đèn Lồng Lớn</strong> trước bình minh và tránh xa
+          <strong>Bóng Mực</strong> trong sương đêm.
+        </p>
+        <div class="modal-tips">
+          <div>✨ <strong>Tự động nhặt</strong> đom đóm khi đi tới gần</div>
+          <div>🏮 Đứng gần Đèn Lồng Lớn và bấm <kbd>E</kbd> để nạp ánh sáng</div>
+          <div>🌟 Bấm <kbd>Q</kbd> hoặc <kbd>Shift</kbd> để <strong>Tỏa sáng</strong> đẩy lùi & làm choáng Bóng Mực</div>
+          <div>🛡️ Đèn đã thắp sáng tạo ra <strong>vùng an toàn</strong> xua đuổi Bóng Mực</div>
+        </div>
+        <button id="btn-start" class="btn-primary">Bắt đầu Đêm 1</button>
+      </div>
+    </div>
+
+    <!-- Win / Loss Overlay -->
+    <div id="gameover-overlay" class="modal-backdrop hidden">
+      <div class="modal-card">
+        <div id="go-badge" class="modal-badge">KẾT THÚC</div>
+        <h2 id="go-title" class="modal-title">Chiến thắng!</h2>
+        <p id="go-reason" class="modal-desc"></p>
+        <div class="stats-grid">
+          <div class="stat-item">
+            <span class="stat-label">Tổng điểm</span>
+            <span id="go-score" class="stat-val gold">0</span>
+          </div>
+          <div class="stat-item">
+            <span class="stat-label">Đèn đã thắp</span>
+            <span id="go-lanterns" class="stat-val">0 / 5</span>
+          </div>
+          <div class="stat-item">
+            <span class="stat-label">Thời gian còn</span>
+            <span id="go-time" class="stat-val">00:00</span>
+          </div>
+          <div class="stat-item">
+            <span class="stat-label">Ngọn lửa còn</span>
+            <span id="go-flames" class="stat-val">0</span>
+          </div>
+        </div>
+        <button id="btn-restart" class="btn-primary">Chơi lại</button>
+      </div>
+    </div>
+
+    <script type="module" src="/src/web/main.ts"></script>
+  </body>
+</html>
