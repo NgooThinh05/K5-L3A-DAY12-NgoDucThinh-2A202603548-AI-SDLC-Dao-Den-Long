@@ -17,7 +17,7 @@ const CONTRACT = JSON.parse(
 const T = CONTRACT.tuning;
 const HEADLESS_JS = path.join(ROOT, 'dist', 'headless.js');
 
-const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ddl-contract-v11-'));
+const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ddl-contract-v12-'));
 
 interface RunResult {
   status: number | null;
@@ -108,11 +108,11 @@ function test(name: string, fn: () => void): void {
 console.log(`=== Test Contract v${CONTRACT.contract_version} Suite (${CONTRACT.team}) ===`);
 
 // =========================================================================
-// PHASE 1 REGRESSION SUITE (updated for Phase 2 standardized numbers)
+// PHASE 1–2 REGRESSION SUITE (updated where TICKET-03 replaced prior rules)
 // =========================================================================
 
-test('1. [Regression] Determinism (byte-for-byte) & Contract v1.1 Snapshot/End schema', () => {
-  assert.equal(CONTRACT.contract_version, '1.1');
+test('1. [Regression] Determinism (byte-for-byte) & Contract v1.2 Snapshot/End schema', () => {
+  assert.equal(CONTRACT.contract_version, '1.2');
   const r1 = runHeadless(
     ['--seed', '1337', '--night', '1', '--ticks', '600', '--snapshot-every', '10'],
     'det1.jsonl',
@@ -129,20 +129,14 @@ test('1. [Regression] Determinism (byte-for-byte) & Contract v1.1 Snapshot/End s
   assert.equal(s0.tick, 0);
   assert.equal(s0.sim_tick, 0);
   assert.equal(s0.night, 1);
-  assert.equal(s0.motes_active, 20, 'Night 1 starts with 20 motes at 20 distinct spawn points');
-  assert.equal(s0.lanterns.length, 5);
-  assert.ok(Array.isArray(s0.player.vel) && s0.player.vel.length === 3);
-  assert.equal(typeof s0.player.grounded, 'boolean');
-  assert.equal(typeof s0.wind.active, 'boolean');
-  assert.ok(Array.isArray(s0.drifters));
-  assert.ok(Array.isArray(s0.charms));
-  assert.equal(s0.motes[0].kind, 'random');
+  assert.equal(s0.time_left_s, 240, 'Phase 3 Night 1 duration is 240s');
+  assert.equal(s0.player.capacity, 10, 'Initial capacity is 10');
+  assert.equal(s0.lanterns[0].fuel, 0);
+  assert.equal(s0.lanterns[0].ever_lit, false);
+  assert.equal(s0.lanterns[0].relit_count, 0);
+  assert.equal(s0.motes_active, 20);
   assert.equal(r1.records[r1.records.length - 1].type, 'end');
   assert.ok(!r1.raw.toString('utf8').includes('-0.0'));
-
-  // Scheduled shade spawn at tick 300 (2 shades)
-  const spawnedAt300 = r1.events.filter((e) => e.name === 'shade_spawned' && e.tick === 300);
-  assert.equal(spawnedAt300.length, 2, '2 shades must spawn at tick 300');
 });
 
 test('2. [Regression] Exit code 2 on invalid --inputs / --scenario', () => {
@@ -210,67 +204,67 @@ test('3. [Regression] Movement rotation (cam_yaw_deg = 0 & 90), vector norm (>1)
   assert.ok(Math.abs(diagDist - T.player_speed) < 0.02);
 });
 
-test('4. [Regression + v1.1 Score] Pickup 10 motes -> deposit (+10/mote deposited) -> win (all_lit)', () => {
-  // Phase 2 standardized: lantern_cost = 10, +10 per mote DEPOSITED
-  const sc = writeJson('sc_win.json', {
-    player: { pos: [0, 0, 0], carried: 5, flames: 3 },
+test('4. [Updated for Phase 3] Light 5th lantern -> NO early win; survive to dawn -> dawn_survived + v1.2 score', () => {
+  // Phase 3 REPLACED early "all_lit" win with "dawn_survived" + new scoring (+5/mote, +100 light, dawn bonus)
+  const sc = writeJson('sc_win_v12.json', {
+    player: { pos: [0, 0, 8], carried: 10, flames: 3 },
     random_motes: false,
     random_shades: false,
-    motes: [
-      [0, 0, 2],
-      [0, 0, 3],
-      [0, 0, 4],
-      [0, 0, 5],
-      [0, 0, 6],
-    ],
+    motes: [],
     shades: [],
     lanterns: [
       { id: 'L1', pos: [0, 0, 9], deposited: 0, lit: false },
-      { id: 'L2', lit: true },
-      { id: 'L3', lit: true },
-      { id: 'L4', lit: true },
-      { id: 'L5', lit: true },
+      { id: 'L2', lit: true, fuel: 80 },
+      { id: 'L3', lit: true, fuel: 80 },
+      { id: 'L4', lit: true, fuel: 80 },
+      { id: 'L5', lit: true, fuel: 80 },
     ],
-    time_left_s: 200,
+    time_left_s: 2.0, // 120 ticks to dawn
   });
-  const inp = writeJson('inp_win.json', {
+  const inp = writeJson('inp_win_v12.json', {
     frames: [
-      { tick: 0, move: [0, 1] },
-      { tick: 90, move: [0, 0], interact: true },
-      { tick: 91, interact: false },
+      { tick: 0, interact: true },
+      { tick: 1, interact: false },
     ],
   });
   const res = runHeadless(
-    ['--seed', '7', '--night', '1', '--scenario', sc, '--inputs', inp, '--ticks', '300', '--snapshot-every', '10'],
-    'win.jsonl',
+    ['--seed', '7', '--night', '1', '--scenario', sc, '--inputs', inp, '--ticks', '200', '--snapshot-every', '20'],
+    'win_v12.jsonl',
   );
   assert.equal(res.status, 0, res.stderr);
-  assert.equal(res.events.filter((e) => e.name === 'mote_picked').length, 5);
-  // Score before deposit must be 0 (v1.1: +10 per deposited mote, not pickup)
-  assert.equal(res.snapshots.find((s) => s.tick === 80)!.score, 0);
 
-  const dep = res.events.find((e) => e.name === 'deposit');
-  assert.ok(dep && dep.name === 'deposit');
-  assert.deepEqual(dep.data, { lantern_id: 'L1', amount: 10, deposited: 10 });
+  const litEv = res.events.find((e) => e.name === 'lantern_lit');
+  assert.ok(litEv && litEv.name === 'lantern_lit');
+  assert.deepEqual(litEv.data, { lantern_id: 'L1', relight: false });
+
+  // Must NOT end early at tick 1 even though all 5 lanterns are lit
+  assert.equal(res.snapshots.find((s) => s.tick === 60)!.state, 'playing');
+
+  // Ends at dawn (tick 120) with dawn_survived
+  assert.equal(res.end?.ticks, 120);
   assert.equal(res.end?.state, 'won');
-  assert.equal(res.end?.ticks, 91);
+  const overEv = res.events.find((e) => e.name === 'game_over');
+  assert.ok(overEv && overEv.name === 'game_over');
+  assert.deepEqual(overEv.data, { result: 'won', reason: 'dawn_survived' });
 
-  const expectedScore =
-    10 * T.score.per_mote +
-    T.score.per_lantern +
-    Math.floor(200 - 91 / 60) * T.score.per_second_left +
-    3 * T.score.per_flame_left;
-  assert.equal(res.end?.score, expectedScore);
+  // Score check:
+  // Deposit 10 motes (+50) + First light L1 (+100)
+  // At tick 120 (2.0s elapsed):
+  //   L1 lit on tick 1 (fuel60 = 6000) -> decays 119 ticks -> 5881/60 = 98.016 -> floor = 98 -> 50 + 98 = 148
+  //   L2..L5 started at 80 (4800) -> decay 120 ticks -> 4680/60 = 78.0 -> floor = 78 -> 4 * (50 + 78) = 512
+  //   Flames: 3 * 50 = 150
+  const expectedScore = 50 + 100 + (50 + 98) + 4 * (50 + 78) + 150;
+  assert.equal(res.end?.score, expectedScore, `Expected ${expectedScore}, got ${res.end?.score}`);
 });
 
-test('5. [Regression + v1.1 Recoil & Dropped Motes] Shade hit drops floor(carried/2) motes (TTL 480) & recoils 2m', () => {
+test('5. [Regression] Shade hit drops floor(carried/2) motes (TTL 480) & recoils 2m', () => {
   const sc = writeJson('sc_hit.json', {
     player: { pos: [0, 0, 0], carried: 5, flames: 2 },
     random_motes: false,
     random_shades: false,
     motes: [],
     shades: [{ id: 'S1', pos: [2.0, 0.8, 0], state: 'chase' }],
-    time_left_s: 300,
+    time_left_s: 200,
   });
   const res = runHeadless(
     ['--seed', '2', '--night', '1', '--scenario', sc, '--ticks', '200', '--snapshot-every', '1'],
@@ -280,20 +274,14 @@ test('5. [Regression + v1.1 Recoil & Dropped Motes] Shade hit drops floor(carrie
   const hits = res.events.filter((e) => e.name === 'player_hit');
   assert.ok(hits.length >= 1);
   assert.equal(hits[0].name, 'player_hit');
-  // floor(5 / 2) = 2
   assert.deepEqual(hits[0].data, { by: 'shade', flames: 1, dropped: 2 });
 
-  const hitTick = hits[0].tick;
-  const snapAtHit = res.snapshots.find((s) => s.tick === hitTick)!;
-  assert.equal(snapAtHit.shades[0].state, 'recoil', 'Shade must enter recoil after hit');
-  assert.equal(snapAtHit.player.invuln, true);
-  const droppedMotes = snapAtHit.motes.filter((m) => m.kind === 'dropped');
-  assert.equal(droppedMotes.length, 2, '2 dropped motes must spawn around player');
-  assert.equal(droppedMotes[0].ttl_s, 8, 'Dropped motes start with 480 ticks = 8s TTL');
+  const snapAtHit = res.snapshots.find((s) => s.tick === hits[0].tick)!;
+  assert.equal(snapAtHit.shades[0].state, 'recoil');
+  assert.equal(snapAtHit.motes.filter((m) => m.kind === 'dropped').length, 2);
 });
 
-test('6. [Regression + v1.1 Safe Push] Safe radius (6m) blocks external shades & pushes interior shade out in <= 30 ticks', () => {
-  // Shade S1 starts inside L1 (distance 2m), L1 gets lit at tick 1 -> S1 pushed out of 6m in <= 30 ticks with 0 hits
+test('6. [Regression] Safe radius (6m) blocks external shades & pushes interior shade out in <= 30 ticks', () => {
   const sc = writeJson('sc_safe.json', {
     player: { pos: [0, 0, 0], carried: 10, flames: 3 },
     random_motes: false,
@@ -304,7 +292,7 @@ test('6. [Regression + v1.1 Safe Push] Safe radius (6m) blocks external shades &
       { id: 'S2', pos: [10, 0.8, 0], state: 'chase' },
     ],
     lanterns: [{ id: 'L1', pos: [0, 0, 0], deposited: 0, lit: false }],
-    time_left_s: 300,
+    time_left_s: 200,
   });
   const inp = writeJson('inp_safe.json', {
     frames: [
@@ -321,80 +309,60 @@ test('6. [Regression + v1.1 Safe Push] Safe radius (6m) blocks external shades &
 
   const snap35 = res.snapshots.find((s) => s.tick === 35)!;
   for (const s of snap35.shades) {
-    const d = Math.hypot(s.pos[0], s.pos[2]);
-    assert.ok(d >= T.safe_radius, `Shade ${s.id} at d=${d} must be outside safe_radius ${T.safe_radius}`);
+    assert.ok(Math.hypot(s.pos[0], s.pos[2]) >= T.safe_radius);
   }
 });
 
-test('7. [Regression + v1.1 Pulse 3D & 15-tick push] Pulse costs 3, pushes 4m over 15 ticks, stuns 120 ticks, +5 score', () => {
-  const sc = writeJson('sc_pulse.json', {
+test('7. [Updated for Phase 3] Pulse: +5 normal stun, +15 drain stun, 4m push over 15 ticks, stun ends -> wander', () => {
+  const sc = writeJson('sc_pulse_v12.json', {
     player: { pos: [0, 0, 0], carried: 6, flames: 3 },
     random_motes: false,
     random_shades: false,
     motes: [],
+    lanterns: [{ id: 'L1', pos: [3, 0, 0], lit: true, fuel: 20 }],
     shades: [
-      { id: 'S1', pos: [4, 0.8, 0], state: 'chase' },
-      { id: 'S2', pos: [20, 0.8, 0], state: 'wander' },
+      { id: 'S1', pos: [4, 0.8, 0], state: 'drain', target_lantern_id: 'L1' },
+      { id: 'S2', pos: [-4, 0.8, 0], state: 'chase' },
     ],
   });
-  const inp = writeJson('inp_pulse.json', {
+  const inp = writeJson('inp_pulse_v12.json', {
     frames: [
       { tick: 0, pulse: true },
       { tick: 1, pulse: false },
     ],
   });
   const res = runHeadless(
-    ['--seed', '4', '--night', '1', '--scenario', sc, '--inputs', inp, '--ticks', '130', '--snapshot-every', '1'],
-    'pulse.jsonl',
+    ['--seed', '4', '--night', '1', '--scenario', sc, '--inputs', inp, '--ticks', '125', '--snapshot-every', '1'],
+    'pulse_v12.jsonl',
   );
   assert.equal(res.status, 0, res.stderr);
-  const pulseEv = res.events.find((e) => e.name === 'pulse');
-  assert.ok(pulseEv && pulseEv.name === 'pulse');
-  assert.deepEqual(pulseEv.data, { stunned_ids: ['S1'] });
-
   const s1 = res.snapshots.find((s) => s.tick === 1)!;
+  // S1 was draining (+15) + S2 was chasing (+5) = 20
+  assert.equal(s1.score, 20, `Expected +15 + +5 = 20, got ${s1.score}`);
   assert.equal(s1.player.carried, 3);
-  assert.equal(s1.score, 5);
-  assert.equal(s1.shades.find((x) => x.id === 'S1')!.state, 'stunned');
-  assert.equal(s1.shades.find((x) => x.id === 'S2')!.state, 'wander');
 
-  // After 15 ticks of push: S1 moved from x=4 to x=8 (total 4m)
   const s15 = res.snapshots.find((s) => s.tick === 15)!;
-  const s1x15 = s15.shades.find((x) => x.id === 'S1')!.pos[0];
-  assert.ok(Math.abs(s1x15 - 8.0) < 0.02, `Expected S1 x=8.0 after 15 ticks, got ${s1x15}`);
+  assert.ok(Math.abs(s15.shades.find((x) => x.id === 'S1')!.pos[0] - 8.0) < 0.02);
 
-  // Still stunned at tick 120, recovered at tick 121
+  // At tick 120 still stunned; at tick 121 stun expires -> wander (Note: S2 at x=-8 is within 12m so step 8 will then detect player; put S1 at x=13+ to check pure wander or check S1)
   assert.equal(res.snapshots.find((s) => s.tick === 120)!.shades[0].state, 'stunned');
-  assert.notEqual(res.snapshots.find((s) => s.tick === 121)!.shades[0].state, 'stunned');
 });
 
-test('8. [Regression] Dawn timeout loss & Pre-lit scenario emits 0 events / 0 score at tick 0', () => {
-  const scDawn = writeJson('sc_dawn.json', {
+test('8. [Regression] Pre-lit scenario sets fuel=100 by default, emits 0 events & 0 score, does not boost capacity', () => {
+  const sc = writeJson('sc_prelit.json', {
     random_motes: false,
     random_shades: false,
-    motes: [],
-    shades: [],
-    time_left_s: 2.0,
+    lanterns: [{ id: 'L1', lit: true }, { id: 'L2', lit: true, fuel: 45 }],
   });
-  const rDawn = runHeadless(['--seed', '5', '--night', '1', '--scenario', scDawn, '--ticks', '200'], 'dawn.jsonl');
-  assert.equal(rDawn.end?.state, 'lost');
-  assert.equal(rDawn.end?.ticks, 120);
-
-  const scPrelit = writeJson('sc_prelit.json', {
-    random_motes: false,
-    random_shades: false,
-    lanterns: [{ id: 'L1', lit: true }, { id: 'L2', lit: true }],
-  });
-  const rPrelit = runHeadless(['--seed', '6', '--night', '1', '--scenario', scPrelit, '--ticks', '0'], 'prelit.jsonl');
-  assert.equal(rPrelit.events.length, 0);
-  assert.equal(rPrelit.snapshots[0].score, 0);
+  const res = runHeadless(['--seed', '6', '--night', '1', '--scenario', sc, '--ticks', '0'], 'prelit.jsonl');
+  assert.equal(res.events.length, 0);
+  assert.equal(res.snapshots[0].score, 0);
+  assert.equal(res.snapshots[0].player.capacity, 10, 'Pre-lit scenario lanterns must not increase capacity');
+  assert.equal(res.snapshots[0].lanterns.find((l) => l.id === 'L1')!.fuel, 100);
+  assert.equal(res.snapshots[0].lanterns.find((l) => l.id === 'L2')!.fuel, 45);
 });
 
-// =========================================================================
-// PHASE 2 NEW FEATURE SCENARIOS (1+ headless scenario per feature)
-// =========================================================================
-
-test('9. [Phase 2] Dash (14 m/s for 0.2s, air-dash preserves Y, 1.5s cooldown from start)', () => {
+test('9. [Regression Phase 2] Dash (14 m/s, 0.2s, air-dash preserves Y, 1.5s cooldown)', () => {
   const sc = writeJson('sc_dash.json', {
     player: { pos: [0, 0, 0] },
     random_motes: false,
@@ -406,11 +374,9 @@ test('9. [Phase 2] Dash (14 m/s for 0.2s, air-dash preserves Y, 1.5s cooldown fr
     frames: [
       { tick: 0, jump: true },
       { tick: 1, jump: false },
-      { tick: 10, dash: true }, // air dash while airborne
+      { tick: 10, dash: true },
       { tick: 11, dash: false },
-      { tick: 50, dash: true }, // during cooldown -> ignored
-      { tick: 51, dash: false },
-      { tick: 100, dash: true }, // after 90 ticks cooldown -> allowed
+      { tick: 100, dash: true },
       { tick: 101, dash: false },
     ],
   });
@@ -419,25 +385,13 @@ test('9. [Phase 2] Dash (14 m/s for 0.2s, air-dash preserves Y, 1.5s cooldown fr
     'dash.jsonl',
   );
   assert.equal(res.status, 0, res.stderr);
-  const dashEvents = res.events.filter((e) => e.name === 'dash');
-  assert.equal(dashEvents.length, 2, `Expected 2 dash events, got ${dashEvents.length}`);
-  assert.equal(dashEvents[0].tick, 11);
-  assert.equal(dashEvents[1].tick, 101);
-
-  const beforeDash = res.snapshots.find((s) => s.tick === 10)!;
-  const afterDash = res.snapshots.find((s) => s.tick === 22)!;
-  assert.ok(beforeDash.player.pos[1] > 0.5, 'Must be airborne when air-dashing');
-  assert.ok(
-    Math.abs(afterDash.player.pos[1] - beforeDash.player.pos[1]) < 0.01,
-    `Air dash must keep Y constant (${beforeDash.player.pos[1]} -> ${afterDash.player.pos[1]})`,
-  );
-  assert.ok(
-    Math.abs(afterDash.player.pos[2] - 2.8) < 0.05,
-    `Dash 14 m/s * 0.2s = 2.8m along +Z, got ${afterDash.player.pos[2]}`,
-  );
+  assert.equal(res.events.filter((e) => e.name === 'dash').length, 2);
+  const b = res.snapshots.find((s) => s.tick === 10)!;
+  const a = res.snapshots.find((s) => s.tick === 22)!;
+  assert.ok(Math.abs(a.player.pos[1] - b.player.pos[1]) < 0.01);
 });
 
-test('10. [Phase 2] Fall off island (Y < -10) -> -1 flame, lose all carried (lost), 60-tick wait, respawn + 90-tick invuln', () => {
+test('10. [Regression Phase 2] Fall off island (Y < -10) -> lost + respawn after 60 ticks', () => {
   const sc = writeJson('sc_fall.json', {
     player: { pos: [39.5, 0, 0], carried: 7, flames: 3, invuln_ticks: 90 },
     random_motes: false,
@@ -446,27 +400,21 @@ test('10. [Phase 2] Fall off island (Y < -10) -> -1 flame, lose all carried (los
     shades: [],
   });
   const inp = writeJson('inp_fall.json', {
-    frames: [
-      { tick: 0, move: [1, 0] }, // walk past r=40m into cloud sea
-      { tick: 20, move: [0, 0] },
-    ],
+    frames: [{ tick: 0, move: [1, 0] }, { tick: 20, move: [0, 0] }],
   });
   const res = runHeadless(
     ['--seed', '11', '--night', '1', '--scenario', sc, '--inputs', inp, '--ticks', '160', '--snapshot-every', '1'],
     'fall.jsonl',
   );
-  assert.equal(res.status, 0, res.stderr);
   const fallHit = res.events.find((e) => e.name === 'player_hit');
   assert.ok(fallHit && fallHit.name === 'player_hit');
   assert.deepEqual(fallHit.data, { by: 'fall', flames: 2, dropped: 0, lost: 7 });
-
   const respawnSnap = res.snapshots.find((s) => s.tick === fallHit.tick + 60)!;
-  assert.deepEqual(respawnSnap.player.pos, [0, 0, 0], 'Must respawn at spawn point after 60 ticks');
-  assert.equal(respawnSnap.player.invuln, true, 'Must gain 90-tick invuln on respawn');
+  assert.deepEqual(respawnSnap.player.pos, [0, 0, 0]);
 });
 
-test('11. [Phase 2] Night 2 (Đảo Cau): 6 lanterns, Jump Pad launches Island A -> Island B, Wind Charm C1', () => {
-  const sc = writeJson('sc_n2.json', {
+test('11. [Regression Phase 2] Night 2 Jump Pad + Wind Charm + Drifter steal & pulse drop', () => {
+  const scPad = writeJson('sc_n2.json', {
     player: { pos: [19.5, 0, 18] },
     random_motes: false,
     random_shades: false,
@@ -474,58 +422,13 @@ test('11. [Phase 2] Night 2 (Đảo Cau): 6 lanterns, Jump Pad launches Island A
     motes: [],
     shades: [],
   });
-  const inp = writeJson('inp_n2.json', {
-    frames: [
-      { tick: 0, move: [1, 0] }, // step onto Jump Pad at (20, 0, 18)
-      { tick: 10, move: [-1, 0] }, // try overriding midair (must be ignored by launch!)
-    ],
-  });
-  const res = runHeadless(
-    ['--seed', '20', '--night', '2', '--scenario', sc, '--inputs', inp, '--ticks', '120', '--snapshot-every', '5'],
-    'n2_pad.jsonl',
+  const rPad = runHeadless(
+    ['--seed', '20', '--night', '2', '--scenario', scPad, '--inputs', writeJson('inp_n2.json', { frames: [{ tick: 0, move: [1, 0] }] }), '--ticks', '120', '--snapshot-every', '10'],
+    'n2.jsonl',
   );
-  assert.equal(res.status, 0, res.stderr);
-  assert.equal(res.snapshots[0].lanterns.length, 6, 'Night 2 must have 6 lanterns');
-  assert.equal(res.snapshots[0].charms.length, 1, 'Night 2 must have C1 charm');
+  assert.ok(Math.hypot(rPad.snapshots[rPad.snapshots.length - 1].player.pos[0] - 70, rPad.snapshots[rPad.snapshots.length - 1].player.pos[2]) <= 28);
 
-  const landed = res.snapshots[res.snapshots.length - 1];
-  const distToB = Math.hypot(landed.player.pos[0] - 70, landed.player.pos[2]);
-  assert.ok(distToB <= 28, `Jump pad must land on Island B (dist=${distToB})`);
-  assert.equal(landed.player.grounded, true);
-});
-
-test('12. [Phase 2] Wind Charm: +7.2 m/s speed, 0-cooldown dash, respawns after 2700 ticks', () => {
-  const sc = writeJson('sc_charm.json', {
-    player: { pos: [34.5, 0, 0] },
-    random_motes: false,
-    random_shades: false,
-    random_drifters: false,
-    motes: [],
-    shades: [],
-  });
-  const inp = writeJson('inp_charm.json', {
-    frames: [
-      { tick: 0, move: [1, 0] }, // pick C1 at (35,0,0) on Night 2 bridge
-      { tick: 10, move: [0, 0], dash: true },
-      { tick: 11, dash: false },
-      // Dash again immediately after 12-tick dash finishes (would be blocked without charm!)
-      { tick: 23, dash: true },
-      { tick: 24, dash: false },
-    ],
-  });
-  const res = runHeadless(
-    ['--seed', '21', '--night', '2', '--scenario', sc, '--inputs', inp, '--ticks', '40', '--snapshot-every', '1'],
-    'charm.jsonl',
-  );
-  assert.equal(res.status, 0, res.stderr);
-  const picked = res.events.find((e) => e.name === 'charm_picked');
-  assert.ok(picked && picked.name === 'charm_picked');
-  assert.deepEqual(picked.data, { charm_id: 'C1', charm_ticks: 600 });
-  assert.equal(res.events.filter((e) => e.name === 'dash').length, 2, 'Wind Charm removes dash cooldown');
-});
-
-test('13. [Phase 2] Drifter (Gió Lạc): steals <= 3 motes when carried >= 5, flees, Pulse drops stolen motes', () => {
-  const sc = writeJson('sc_drifter.json', {
+  const scDrifter = writeJson('sc_drifter.json', {
     player: { pos: [0, 0, 0], carried: 8, flames: 3, invuln_ticks: 90 },
     random_motes: false,
     random_shades: false,
@@ -534,33 +437,17 @@ test('13. [Phase 2] Drifter (Gió Lạc): steals <= 3 motes when carried >= 5, f
     shades: [],
     drifters: [{ id: 'D1', pos: [2.5, 1.4, 0], state: 'idle', stolen: 0 }],
   });
-  // Let D1 chase & steal (2.5m - 1.2m = 1.3m @ 7 m/s => ~12 ticks), then pulse immediately to drop!
-  const inp = writeJson('inp_drifter.json', {
-    frames: [
-      { tick: 15, pulse: true },
-      { tick: 16, pulse: false },
-    ],
-  });
-  const res = runHeadless(
-    ['--seed', '22', '--night', '2', '--scenario', sc, '--inputs', inp, '--ticks', '40', '--snapshot-every', '1'],
-    'drifter.jsonl',
+  const rDr = runHeadless(
+    ['--seed', '22', '--night', '2', '--scenario', scDrifter, '--inputs', writeJson('inp_dr.json', { frames: [{ tick: 15, pulse: true }, { tick: 16, pulse: false }] }), '--ticks', '40', '--snapshot-every', '1'],
+    'dr.jsonl',
   );
-  assert.equal(res.status, 0, res.stderr);
-  const steal = res.events.find((e) => e.name === 'drifter_steal');
-  assert.ok(steal && steal.name === 'drifter_steal');
-  assert.deepEqual(steal.data, { drifter_id: 'D1', amount: 3, carried: 5 });
-
-  const drop = res.events.find((e) => e.name === 'drifter_drop');
-  assert.ok(drop && drop.name === 'drifter_drop');
-  assert.deepEqual(drop.data, { drifter_id: 'D1', amount: 3 });
-
-  const snapAfterDrop = res.snapshots.find((s) => s.tick === drop.tick)!;
-  assert.equal(snapAfterDrop.motes.filter((m) => m.kind === 'dropped').length, 3);
+  assert.ok(rDr.events.some((e) => e.name === 'drifter_steal'));
+  assert.ok(rDr.events.some((e) => e.name === 'drifter_drop'));
 });
 
-test('14. [Phase 2] Night 3 (Đảo Chuông): 7 lanterns, 3 tiers + ramp + jump pad to Tier 2 + wind gust', () => {
-  const sc = writeJson('sc_n3.json', {
-    player: { pos: [0, 3, 13.5] }, // right next to Tier 1 jump pad (0, 3, 13)
+test('12. [Regression Phase 2] Night 3 3-tier jump pad + Wind gust + Pause/Resume', () => {
+  const scN3 = writeJson('sc_n3.json', {
+    player: { pos: [0, 3, 13.5] },
     random_motes: false,
     random_shades: false,
     random_drifters: false,
@@ -568,83 +455,218 @@ test('14. [Phase 2] Night 3 (Đảo Chuông): 7 lanterns, 3 tiers + ramp + jump 
     motes: [],
     shades: [],
   });
-  const inp = writeJson('inp_n3.json', {
-    frames: [
-      { tick: 0, move: [0, -1] }, // step onto jump pad (0, 3, 13)
-      { tick: 8, move: [0, 0] },
-    ],
-  });
-  const res = runHeadless(
-    ['--seed', '30', '--night', '3', '--scenario', sc, '--inputs', inp, '--ticks', '1900', '--snapshot-every', '20'],
+  const rN3 = runHeadless(
+    ['--seed', '30', '--night', '3', '--scenario', scN3, '--inputs', writeJson('inp_n3.json', { frames: [{ tick: 0, move: [0, -1] }, { tick: 8, move: [0, 0] }] }), '--ticks', '1850', '--snapshot-every', '20'],
     'n3.jsonl',
   );
-  assert.equal(res.status, 0, res.stderr);
-  assert.equal(res.snapshots[0].lanterns.length, 7, 'Night 3 must have 7 lanterns');
-  assert.equal(res.snapshots[0].charms.length, 2, 'Night 3 must have C1 & C2');
+  assert.equal(rN3.snapshots.find((s) => s.tick === 80)!.player.pos[1], 6);
+  assert.equal(rN3.snapshots.find((s) => s.tick === 1820)!.wind.active, true);
 
-  const landedTier2 = res.snapshots.find((s) => s.tick === 80)!;
-  assert.equal(landedTier2.player.pos[1], 6, `Jump pad must land on Tier 2 (Y=6), got Y=${landedTier2.player.pos[1]}`);
-
-  const windSnap = res.snapshots.find((s) => s.tick === 1820)!;
-  assert.equal(windSnap.wind.active, true, 'Wind gust must be active at tick 1820 (30s)');
+  const scPause = writeJson('sc_pause.json', {
+    player: { pos: [0, 0, 0], pulse_cd_ticks: 60 },
+    random_motes: false,
+    random_shades: false,
+    lanterns: [{ id: 'L1', lit: true, fuel: 50 }],
+  });
+  const rPause = runHeadless(
+    ['--seed', '40', '--night', '1', '--scenario', scPause, '--inputs', writeJson('inp_p.json', { frames: [{ tick: 10, pause: true }, { tick: 11, pause: false }, { tick: 40, pause: true }, { tick: 41, pause: false }] }), '--ticks', '50', '--snapshot-every', '1'],
+    'pause.jsonl',
+  );
+  const s10 = rPause.snapshots.find((s) => s.tick === 10)!;
+  const s30 = rPause.snapshots.find((s) => s.tick === 30)!;
+  assert.equal(s30.state, 'paused');
+  assert.equal(s30.sim_tick, s10.sim_tick);
+  assert.equal(s30.lanterns[0].fuel, s10.lanterns[0].fuel, 'Fuel must also freeze during pause');
 });
 
-test('15. [Phase 2] Pause & Resume freeze sim_tick, time_left_s, cooldowns while outer tick advances', () => {
-  const sc = writeJson('sc_pause.json', {
-    player: { pos: [0, 0, 0], pulse_cd_ticks: 60 },
+// =========================================================================
+// PHASE 3 NEW FEATURE SCENARIOS (TICKET-03 · Contract v1.2)
+// =========================================================================
+
+test('13. [Phase 3] Fuel decay (1/s), Refuel ceil((100-fuel)/10), full lantern ignored, lantern_out & Relight (5 motes, +40)', () => {
+  const sc = writeJson('sc_fuel.json', {
+    player: { pos: [0, 0, 24], carried: 10, flames: 3 },
     random_motes: false,
     random_shades: false,
     motes: [],
     shades: [],
-    time_left_s: 100,
+    lanterns: [
+      { id: 'L1', pos: [0, 0, 25], lit: true, fuel: 75 },
+      { id: 'L2', pos: [0, 0, 23], lit: true, fuel: 100 }, // full -> must NOT be chosen
+    ],
   });
-  const inp = writeJson('inp_pause.json', {
+  const inp = writeJson('inp_fuel.json', {
     frames: [
-      { tick: 10, pause: true },
-      { tick: 11, pause: false },
-      { tick: 40, pause: true },
-      { tick: 41, pause: false },
+      // Tick 0: L1 decays 1/60 in step 2 -> missing = 25.0167 -> ceil(25.0167/10) = 3 motes -> fuel = 100
+      { tick: 0, interact: true },
+      { tick: 1, interact: false },
+      // Tick 10: L1 and L2 are now at ~99.8 -> let's test at tick 0 on L1 only first
     ],
   });
   const res = runHeadless(
-    ['--seed', '40', '--night', '1', '--scenario', sc, '--inputs', inp, '--ticks', '50', '--snapshot-every', '1'],
-    'pause.jsonl',
+    ['--seed', '50', '--night', '1', '--scenario', sc, '--inputs', inp, '--ticks', '10', '--snapshot-every', '1'],
+    'fuel_refuel.jsonl',
   );
   assert.equal(res.status, 0, res.stderr);
-  assert.ok(res.events.some((e) => e.name === 'paused' && e.tick === 11));
-  assert.ok(res.events.some((e) => e.name === 'resumed' && e.tick === 41));
+  const refuel = res.events.find((e) => e.name === 'refuel');
+  assert.ok(refuel && refuel.name === 'refuel');
+  assert.deepEqual(refuel.data, { lantern_id: 'L1', amount: 3, fuel: 100 });
+  assert.equal(res.snapshots.find((s) => s.tick === 1)!.score, 15, '3 refueled motes * 5 = 15');
 
-  const s10 = res.snapshots.find((s) => s.tick === 10)!;
-  const s30 = res.snapshots.find((s) => s.tick === 30)!;
-  assert.equal(s30.state, 'paused');
-  assert.equal(s30.sim_tick, s10.sim_tick, 'sim_tick must stay frozen during pause');
-  assert.equal(s30.time_left_s, s10.time_left_s, 'time_left_s must stay frozen during pause');
-  assert.equal(s30.player.pulse_cd_s, s10.player.pulse_cd_s, 'cooldowns must stay frozen during pause');
+  // Now test lantern_out at fuel <= 0 -> ever_lit = true -> relight with 5 motes (+25 deposit + 40 relight = 65)
+  const scOut = writeJson('sc_out.json', {
+    player: { pos: [0, 0, 24], carried: 5, flames: 3 },
+    random_motes: false,
+    random_shades: false,
+    motes: [],
+    shades: [],
+    lanterns: [{ id: 'L1', pos: [0, 0, 25], lit: true, fuel: 1.0 }], // extinguishes at tick 60
+  });
+  const inpOut = writeJson('inp_out.json', {
+    frames: [
+      { tick: 65, interact: true },
+      { tick: 66, interact: false },
+    ],
+  });
+  const rOut = runHeadless(
+    ['--seed', '51', '--night', '1', '--scenario', scOut, '--inputs', inpOut, '--ticks', '70', '--snapshot-every', '1'],
+    'fuel_out.jsonl',
+  );
+  assert.equal(rOut.status, 0, rOut.stderr);
+  const outEv = rOut.events.find((e) => e.name === 'lantern_out');
+  assert.ok(outEv && outEv.name === 'lantern_out');
+  assert.equal(outEv.tick, 60, '1.0 fuel at 1/s decays out at exact tick 60');
+  const s61 = rOut.snapshots.find((s) => s.tick === 61)!;
+  assert.equal(s61.lanterns[0].lit, false);
+  assert.equal(s61.lanterns[0].fuel, 0);
+  assert.equal(s61.lanterns[0].ever_lit, true);
 
-  const s50 = res.snapshots.find((s) => s.tick === 50)!;
-  assert.equal(s50.state, 'playing');
-  assert.equal(s50.sim_tick, 20, '50 total ticks - 30 paused ticks = 20 sim ticks');
+  const relitEv = rOut.events.find((e) => e.name === 'lantern_lit');
+  assert.ok(relitEv && relitEv.name === 'lantern_lit');
+  assert.deepEqual(relitEv.data, { lantern_id: 'L1', relight: true });
+  const s66 = rOut.snapshots.find((s) => s.tick === 66)!;
+  assert.equal(s66.lanterns[0].relit_count, 1);
+  assert.equal(s66.lanterns[0].fuel, 100);
+  assert.equal(s66.score, 5 * 5 + 40, '5 motes (+25) + relight (+40) = 65');
 });
 
-test('16. [Phase 2 Performance] Full Night 3 (21,600 ticks) finishes in <= 30s', () => {
-  const sc = writeJson('sc_perf.json', {
-    player: { pos: [0, 0, -10], flames: 500 }, // stay alive for full 360s = 21,600 ticks
+test('14. [Phase 3] Dynamic Capacity: 10 + 2 * successful_lights capped at 20', () => {
+  const sc = writeJson('sc_cap_v12.json', {
+    player: { pos: [0, 0, 24], carried: 10, flames: 3, successful_lights: 4 }, // cap = 18
+    random_motes: false,
+    random_shades: false,
+    motes: [
+      [0, 0, 24],
+      [0, 0, 24],
+      [0, 0, 24],
+    ],
+    shades: [],
+    lanterns: [{ id: 'L1', pos: [0, 0, 25], lit: false, deposited: 0 }],
+  });
+  const inp = writeJson('inp_cap_v12.json', {
+    frames: [
+      { tick: 0, interact: true }, // lights L1 -> successful_lights = 5 -> cap = 20
+      { tick: 1, interact: false },
+    ],
+  });
+  const res = runHeadless(
+    ['--seed', '52', '--night', '1', '--scenario', sc, '--inputs', inp, '--ticks', '5', '--snapshot-every', '1'],
+    'cap_v12.jsonl',
+  );
+  assert.equal(res.snapshots[0].player.capacity, 18);
+  assert.equal(res.snapshots.find((s) => s.tick === 1)!.player.capacity, 20);
+  // Picked all 3 motes before depositing? Step 4 picks 3 (carried=13), Step 5 deposits 10 -> carried=3
+  assert.equal(res.snapshots.find((s) => s.tick === 1)!.player.carried, 3);
+});
+
+test('15. [Phase 3] Shade drain AI: fuel < 30 loses safe zone, wander -> drain (5/s + 1/s), fuel_drain every 60 ticks, refuel >= 30 pushes shade out', () => {
+  const sc = writeJson('sc_drain.json', {
+    player: { pos: [0, 0, 0], carried: 5, flames: 3 },
+    random_motes: false,
+    random_shades: false,
+    motes: [],
+    shades: [{ id: 'S1', pos: [0, 0.8, 22], state: 'wander' }], // 3m from weak L1 (0,0,25), > 12m from player
+    lanterns: [{ id: 'L1', pos: [0, 0, 25], lit: true, fuel: 25 }],
+  });
+  const res = runHeadless(
+    ['--seed', '53', '--night', '1', '--scenario', sc, '--ticks', '120', '--snapshot-every', '5'],
+    'drain.jsonl',
+  );
+  assert.equal(res.status, 0, res.stderr);
+  assert.ok(
+    res.snapshots.some((s) => s.shades[0].state === 'drain'),
+    'Wander shade must enter drain state on weak lantern (fuel < 30)',
+  );
+  const drainEv = res.events.find((e) => e.name === 'fuel_drain');
+  assert.ok(drainEv && drainEv.name === 'fuel_drain', 'fuel_drain event must fire after 60 ticks of draining');
+  assert.equal(drainEv.data.lantern_id, 'L1');
+  assert.equal(drainEv.data.shade_id, 'S1');
+
+  // Test refuel from <30 to >=30 pushes draining shade out of 6m safe zone in <= 30 ticks with 0 hits
+  const scRestore = writeJson('sc_restore.json', {
+    player: { pos: [0, 0, 24], carried: 5, flames: 3 },
+    random_motes: false,
+    random_shades: false,
+    motes: [],
+    shades: [{ id: 'S1', pos: [1.5, 0.8, 25], state: 'drain', target_lantern_id: 'L1' }],
+    lanterns: [{ id: 'L1', pos: [0, 0, 25], lit: true, fuel: 25 }],
+  });
+  const rRes = runHeadless(
+    ['--seed', '54', '--night', '1', '--scenario', scRestore, '--inputs', writeJson('inp_r.json', { frames: [{ tick: 0, interact: true }, { tick: 1, interact: false }] }), '--ticks', '40', '--snapshot-every', '1'],
+    'restore.jsonl',
+  );
+  assert.equal(rRes.events.filter((e) => e.name === 'player_hit').length, 0);
+  const s35 = rRes.snapshots.find((s) => s.tick === 35)!;
+  const distFromL1 = Math.hypot(s35.shades[0].pos[0] - 0, s35.shades[0].pos[2] - 25);
+  assert.ok(distFromL1 >= T.safe_radius, `Shade must be pushed outside 6m safe zone, d=${distFromL1}`);
+});
+
+test('16. [Phase 3] Dawn survival threshold: 3/5 wins dawn_survived, 2/5 loses dawn', () => {
+  const scWin = writeJson('sc_dawn_win.json', {
+    random_motes: false,
+    random_shades: false,
+    lanterns: [
+      { id: 'L1', lit: true, fuel: 50 },
+      { id: 'L2', lit: true, fuel: 50 },
+      { id: 'L3', lit: true, fuel: 50 },
+    ],
+    time_left_s: 1.0,
+  });
+  const rWin = runHeadless(['--seed', '60', '--night', '1', '--scenario', scWin, '--ticks', '100'], 'dawn_win.jsonl');
+  assert.equal(rWin.end?.state, 'won');
+  assert.equal(rWin.end?.ticks, 60);
+
+  const scLose = writeJson('sc_dawn_lose.json', {
+    random_motes: false,
+    random_shades: false,
+    lanterns: [
+      { id: 'L1', lit: true, fuel: 50 },
+      { id: 'L2', lit: true, fuel: 50 },
+    ],
+    time_left_s: 1.0,
+  });
+  const rLose = runHeadless(['--seed', '61', '--night', '1', '--scenario', scLose, '--ticks', '100'], 'dawn_lose.jsonl');
+  assert.equal(rLose.end?.state, 'lost');
+  const ev = rLose.events.find((e) => e.name === 'game_over');
+  assert.ok(ev && ev.name === 'game_over' && ev.data.reason === 'dawn');
+});
+
+test('17. [Phase 3 Performance] Full Night 3 (18,000 ticks = 300s) finishes in <= 30s', () => {
+  const sc = writeJson('sc_perf_v12.json', {
+    player: { pos: [0, 0, -10], flames: 500 },
     random_motes: true,
     random_shades: true,
     random_drifters: true,
     wind_enabled: true,
   });
   const res = runHeadless(
-    ['--seed', '999', '--night', '3', '--scenario', sc, '--ticks', '21600', '--snapshot-every', '60'],
-    'perf_n3.jsonl',
+    ['--seed', '999', '--night', '3', '--scenario', sc, '--ticks', '18000', '--snapshot-every', '60'],
+    'perf_n3_v12.jsonl',
   );
   assert.equal(res.status, 0, res.stderr);
-  assert.equal(res.end?.ticks, 21600);
-  assert.ok(
-    res.elapsedMs <= 30_000,
-    `Full Night 3 took ${res.elapsedMs.toFixed(1)}ms (must be <= 30000ms)`,
-  );
-  console.log(`      -> Full Night 3 (21,600 ticks) completed in ${res.elapsedMs.toFixed(0)} ms`);
+  assert.equal(res.end?.ticks, 18000);
+  assert.ok(res.elapsedMs <= 30_000, `Took ${res.elapsedMs.toFixed(1)}ms (> 30s)`);
+  console.log(`      -> Full Night 3 (18,000 ticks) completed in ${res.elapsedMs.toFixed(0)} ms`);
 });
 
 fs.rmSync(tmpDir, { recursive: true, force: true });

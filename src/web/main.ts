@@ -4,6 +4,7 @@ import {
   createDefaultInput,
   type EventRecord,
   type GameContract,
+  type GameOverReason,
   type NightNumber,
   type SimInput,
   type SnapshotRecord,
@@ -23,11 +24,12 @@ import {
 const contract = contractJson as unknown as GameContract;
 const tuning = contract.tuning;
 
-// Persisted user settings
+// Persisted user settings (volume, sensitivity, colorblind mode)
 const SETTINGS_KEY = 'ddl_settings_v1';
 interface UserSettings {
   volume: number; // 0..1
   mouseSensitivity: number; // 0.2..2.5
+  colorblindMode: boolean;
 }
 
 function loadSettings(): UserSettings {
@@ -41,12 +43,13 @@ function loadSettings(): UserSettings {
           typeof parsed.mouseSensitivity === 'number'
             ? Math.max(0.2, Math.min(2.5, parsed.mouseSensitivity))
             : 1.0,
+        colorblindMode: Boolean(parsed.colorblindMode),
       };
     }
   } catch {
     // ignore storage errors
   }
-  return { volume: 0.7, mouseSensitivity: 1.0 };
+  return { volume: 0.7, mouseSensitivity: 1.0, colorblindMode: false };
 }
 
 function saveSettings(s: UserSettings): void {
@@ -84,12 +87,15 @@ const hudFlames = document.getElementById('hud-flames')!;
 const hudCharmPill = document.getElementById('hud-charm-pill')!;
 const hudCharmTime = document.getElementById('hud-charm-time')!;
 const hudWindPill = document.getElementById('hud-wind-pill')!;
+const hudLowFuelPill = document.getElementById('hud-lowfuel-pill')!;
 const hudFps = document.getElementById('hud-fps')!;
 const hudClockCard = document.getElementById('hud-clock-card')!;
+const hudClockWarn = document.getElementById('hud-clock-warn')!;
 const hudNightLabel = document.getElementById('hud-night-label')!;
 const hudTime = document.getElementById('hud-time')!;
 const hudLanterns = document.getElementById('hud-lanterns')!;
 const hudLanternTotal = document.getElementById('hud-lantern-total')!;
+const hudLanternReq = document.getElementById('hud-lantern-req')!;
 const hudScore = document.getElementById('hud-score')!;
 const hudCarried = document.getElementById('hud-carried')!;
 const hudCap = document.getElementById('hud-cap')!;
@@ -99,9 +105,8 @@ const hudDashBar = document.getElementById('hud-dash-bar')!;
 const hudPulseStatus = document.getElementById('hud-pulse-status')!;
 const hudPulseBar = document.getElementById('hud-pulse-bar')!;
 const interactPrompt = document.getElementById('interact-prompt')!;
-const promptProgress = document.getElementById('prompt-progress')!;
 
-// Intro / Pause / Settings / GameOver elements
+// Intro / Settings / GameOver elements
 const introBadge = document.getElementById('intro-badge')!;
 const introTitle = document.getElementById('intro-title')!;
 const introQuote = document.getElementById('intro-quote')!;
@@ -110,6 +115,7 @@ const settingVol = document.getElementById('setting-vol') as HTMLInputElement;
 const settingVolVal = document.getElementById('setting-vol-val')!;
 const settingSens = document.getElementById('setting-sens') as HTMLInputElement;
 const settingSensVal = document.getElementById('setting-sens-val')!;
+const settingColorblind = document.getElementById('setting-colorblind') as HTMLInputElement;
 
 const goBadge = document.getElementById('go-badge')!;
 const goTitle = document.getElementById('go-title')!;
@@ -119,27 +125,53 @@ const goTotalScore = document.getElementById('go-total-score')!;
 const goLanterns = document.getElementById('go-lanterns')!;
 const goTimeFlames = document.getElementById('go-time-flames')!;
 const btnNextNight = document.getElementById('btn-next-night')!;
+const btnHudZoomReset = document.getElementById('btn-hud-zoom-reset')!;
+const btnMenuZoomReset = document.getElementById('btn-menu-zoom-reset')!;
 
-// Build 10-slot mote bar DOM once
-hudCap.textContent = String(tuning.carry_capacity);
-const moteSlotEls: HTMLDivElement[] = [];
-for (let i = 0; i < tuning.carry_capacity; i++) {
-  const slot = document.createElement('div');
-  slot.className = 'mote-slot';
-  moteSlotsEl.appendChild(slot);
-  moteSlotEls.push(slot);
+function updateZoomLabels(): void {
+  // Show magnifying percentage (1 / zoom factor so zooming closer shows > 100%)
+  const pct = Math.round((1 / renderer.getZoom()) * 100);
+  btnHudZoomReset.textContent = `${pct}%`;
+  btnMenuZoomReset.textContent = `${pct}%`;
 }
+
+// Dynamic mote slot bar (supports capacity 10..20)
+let renderedSlotCap = 0;
+let moteSlotEls: HTMLDivElement[] = [];
+
+function ensureMoteSlots(cap: number): void {
+  if (renderedSlotCap === cap) return;
+  renderedSlotCap = cap;
+  hudCap.textContent = String(cap);
+  moteSlotsEl.innerHTML = '';
+  moteSlotsEl.style.gridTemplateColumns = `repeat(${Math.min(cap, 20)}, ${cap > 12 ? 14 : 22}px)`;
+  moteSlotEls = [];
+  for (let i = 0; i < cap; i++) {
+    const slot = document.createElement('div');
+    slot.className = 'mote-slot';
+    moteSlotsEl.appendChild(slot);
+    moteSlotEls.push(slot);
+  }
+}
+ensureMoteSlots(tuning.carry_capacity);
 
 // Engine, Renderer, Audio
 const renderer = new GameRenderer(canvasContainer, tuning);
 const sfx = new SoundEffects();
 sfx.setVolume(settings.volume);
 
-// Sync settings sliders
+function applyColorblindSetting(): void {
+  document.body.classList.toggle('colorblind', settings.colorblindMode);
+  renderer.setColorblindMode(settings.colorblindMode);
+}
+applyColorblindSetting();
+
+// Sync settings UI controls
 settingVol.value = String(Math.round(settings.volume * 100));
 settingVolVal.textContent = `${Math.round(settings.volume * 100)}%`;
 settingSens.value = String(Math.round(settings.mouseSensitivity * 100));
 settingSensVal.textContent = `${settings.mouseSensitivity.toFixed(1)}x`;
+settingColorblind.checked = settings.colorblindMode;
 
 // Selection & Campaign state
 let selectedNight: NightNumber = 1;
@@ -173,16 +205,16 @@ function renderMenuChoices(): void {
   selectedThemePill.textContent = `${themeCfg.name} · ${themeCfg.ghostName}`;
   previewInfo.textContent = `${story.islandName} · ${charCfg.name} · Ma: ${themeCfg.ghostName}`;
 
-  // 1. Night cards
   nightGrid.innerHTML = '';
   for (const n of [1, 2, 3] as NightNumber[]) {
     const ns = NIGHT_STORIES[n];
+    const req = Math.ceil(tuning.win_ratio * ns.lanternCount);
     const btn = document.createElement('button');
     btn.className = `choice-card ${selectedNight === n ? 'active' : ''}`;
     btn.innerHTML = `
       <div class="choice-name">Đêm ${n}</div>
       <div class="choice-sub">${ns.islandName.split('—')[1]?.trim() ?? ''}</div>
-      <div class="choice-desc">${ns.lanternCount} đèn · ${ns.durationS}s</div>
+      <div class="choice-desc">Giữ ≥${req}/${ns.lanternCount} đèn · ${ns.durationS}s</div>
     `;
     btn.addEventListener('click', () => {
       selectedNight = n;
@@ -192,7 +224,6 @@ function renderMenuChoices(): void {
     nightGrid.appendChild(btn);
   }
 
-  // 2. Character cards
   characterGrid.innerHTML = '';
   for (const ch of CHARACTERS) {
     const btn = document.createElement('button');
@@ -213,7 +244,6 @@ function renderMenuChoices(): void {
     characterGrid.appendChild(btn);
   }
 
-  // 3. Theme + Ghost cards
   mapGrid.innerHTML = '';
   for (const th of MAP_THEMES) {
     const btn = document.createElement('button');
@@ -282,6 +312,7 @@ function beginActiveNight(): void {
   hudEl.classList.remove('hidden');
   hudNightLabel.textContent = NIGHT_STORIES[activeNight].islandName;
   hudLanternTotal.textContent = String(NIGHT_STORIES[activeNight].lanternCount);
+  hudLanternReq.textContent = String(engine.getWinThreshold());
   updateHud(engine.getSnapshot());
 }
 
@@ -337,6 +368,32 @@ btnNextNight.addEventListener('click', () => {
   }
 });
 
+// Zoom button bindings (HUD & Menu Preview)
+document.getElementById('btn-hud-zoom-in')!.addEventListener('click', () => {
+  renderer.adjustZoom(-0.18);
+  updateZoomLabels();
+});
+document.getElementById('btn-hud-zoom-out')!.addEventListener('click', () => {
+  renderer.adjustZoom(0.18);
+  updateZoomLabels();
+});
+btnHudZoomReset.addEventListener('click', () => {
+  renderer.setZoom(1.0);
+  updateZoomLabels();
+});
+document.getElementById('btn-menu-zoom-in')!.addEventListener('click', () => {
+  renderer.adjustZoom(-0.18);
+  updateZoomLabels();
+});
+document.getElementById('btn-menu-zoom-out')!.addEventListener('click', () => {
+  renderer.adjustZoom(0.18);
+  updateZoomLabels();
+});
+btnMenuZoomReset.addEventListener('click', () => {
+  renderer.setZoom(1.0);
+  updateZoomLabels();
+});
+
 settingVol.addEventListener('input', () => {
   const pct = Number(settingVol.value);
   settings.volume = pct / 100;
@@ -349,6 +406,12 @@ settingSens.addEventListener('input', () => {
   const val = Number(settingSens.value) / 100;
   settings.mouseSensitivity = val;
   settingSensVal.textContent = `${val.toFixed(1)}x`;
+  saveSettings(settings);
+});
+
+settingColorblind.addEventListener('change', () => {
+  settings.colorblindMode = settingColorblind.checked;
+  applyColorblindSetting();
   saveSettings(settings);
 });
 
@@ -369,6 +432,21 @@ window.addEventListener('keydown', (e) => {
     sfx.toggleMute();
     return;
   }
+  if (e.code === 'Equal' || e.code === 'NumpadAdd') {
+    renderer.adjustZoom(-0.14);
+    updateZoomLabels();
+    return;
+  }
+  if (e.code === 'Minus' || e.code === 'NumpadSubtract') {
+    renderer.adjustZoom(0.14);
+    updateZoomLabels();
+    return;
+  }
+  if (e.code === 'Digit0' || e.code === 'Numpad0') {
+    renderer.setZoom(1.0);
+    updateZoomLabels();
+    return;
+  }
   keys.add(e.code);
 });
 
@@ -387,7 +465,7 @@ canvasContainer.addEventListener('pointerdown', (e) => {
 });
 
 window.addEventListener('pointermove', (e) => {
-  if (!isDragging || mode !== 'playing') return;
+  if (!isDragging || (mode !== 'playing' && mode !== 'menu')) return;
   const dx = e.clientX - lastMouseX;
   lastMouseX = e.clientX;
   camYawDeg = (camYawDeg - dx * 0.35 * settings.mouseSensitivity + 360) % 360;
@@ -396,6 +474,22 @@ window.addEventListener('pointermove', (e) => {
 window.addEventListener('pointerup', () => {
   isDragging = false;
 });
+
+// Mouse wheel smooth Zoom In / Zoom Out (active on 3D canvas & menu preview)
+window.addEventListener(
+  'wheel',
+  (e) => {
+    const target = e.target as HTMLElement | null;
+    if (target && target.closest('.menu-panel, .modal-card')) {
+      return; // allow normal scrolling inside the left menu panel
+    }
+    e.preventDefault();
+    const step = Math.sign(e.deltaY) * 0.12;
+    renderer.adjustZoom(step);
+    updateZoomLabels();
+  },
+  { passive: false },
+);
 
 function formatTime(seconds: number): string {
   const s = Math.max(0, Math.ceil(seconds));
@@ -430,7 +524,8 @@ function handleEvents(events: EventRecord[], snap: SnapshotRecord): void {
         sfx.playMotePickup(ev.data.carried);
         renderer.spawnBurst(snap.player.pos, 0xfff6c2, 10);
         break;
-      case 'deposit': {
+      case 'deposit':
+      case 'refuel': {
         sfx.playDeposit();
         const l = snap.lanterns.find((x) => x.id === ev.data.lantern_id);
         if (l) renderer.spawnBurst(l.pos, 0xffb347, 14);
@@ -440,6 +535,12 @@ function handleEvents(events: EventRecord[], snap: SnapshotRecord): void {
         sfx.playLanternLit();
         const l = snap.lanterns.find((x) => x.id === ev.data.lantern_id);
         if (l) renderer.spawnBurst(l.pos, 0xffe9b0, 26);
+        break;
+      }
+      case 'lantern_out': {
+        sfx.playHit();
+        const l = snap.lanterns.find((x) => x.id === ev.data.lantern_id);
+        if (l) renderer.spawnBurst(l.pos, 0x5b5f6e, 16);
         break;
       }
       case 'pulse':
@@ -462,7 +563,7 @@ function handleEvents(events: EventRecord[], snap: SnapshotRecord): void {
         break;
       case 'player_hit':
         sfx.playHit();
-        renderer.spawnBurst(snap.player.pos, 0x7a3cff, 18);
+        renderer.spawnBurst(snap.player.pos, settings.colorblindMode ? 0x00b3ff : 0x7a3cff, 18);
         break;
       case 'paused':
         mode = 'paused';
@@ -512,13 +613,23 @@ function updateHud(snap: SnapshotRecord): void {
   }
   lastWindWarnState = windWarn;
 
-  // Clock + <= 30s danger blink + last 10s audio ticks
-  hudTime.textContent = formatTime(snap.time_left_s);
-  if (snap.time_left_s <= 30 && snap.state === 'playing') {
-    hudClockCard.classList.add('danger');
+  // Low fuel lantern alert pill (with ⚠ for accessibility & colorblind mode)
+  const weakLanterns = snap.lanterns.filter(
+    (l) => l.lit && l.fuel < tuning.low_fuel_threshold,
+  );
+  if (weakLanterns.length > 0 && snap.state === 'playing') {
+    hudLowFuelPill.classList.remove('hidden');
+    hudLowFuelPill.textContent = `⚠ Sắp hết dầu: ${weakLanterns.map((l) => `${l.id} (${Math.ceil(l.fuel)}%)`).join(', ')}`;
   } else {
-    hudClockCard.classList.remove('danger');
+    hudLowFuelPill.classList.add('hidden');
   }
+
+  // Clock + <= 30s danger blink (with ⚠ in colorblind mode) + last 10s audio ticks
+  hudTime.textContent = formatTime(snap.time_left_s);
+  const isDangerTime = snap.time_left_s <= 30 && snap.state === 'playing';
+  hudClockCard.classList.toggle('danger', isDangerTime);
+  hudClockWarn.classList.toggle('hidden', !isDangerTime);
+
   const ceilSec = Math.ceil(snap.time_left_s);
   if (ceilSec <= 10 && ceilSec > 0 && ceilSec !== lastCountdownSec && snap.state === 'playing') {
     lastCountdownSec = ceilSec;
@@ -530,7 +641,8 @@ function updateHud(snap: SnapshotRecord): void {
   hudLanterns.textContent = String(litCount);
   hudScore.textContent = String(snap.score);
 
-  // 10-slot Mote bar
+  // Dynamic capacity mote bar (10..20)
+  ensureMoteSlots(snap.player.capacity);
   hudCarried.textContent = String(snap.player.carried);
   for (let i = 0; i < moteSlotEls.length; i++) {
     moteSlotEls[i].classList.toggle('filled', i < snap.player.carried);
@@ -542,7 +654,10 @@ function updateHud(snap: SnapshotRecord): void {
     hudDashBar.style.width = '100%';
   } else if (snap.player.dash_cd_s > 0.01) {
     hudDashStatus.textContent = `${snap.player.dash_cd_s.toFixed(1)}s`;
-    const pct = Math.max(0, Math.min(100, ((tuning.dash_cooldown_s - snap.player.dash_cd_s) / tuning.dash_cooldown_s) * 100));
+    const pct = Math.max(
+      0,
+      Math.min(100, ((tuning.dash_cooldown_s - snap.player.dash_cd_s) / tuning.dash_cooldown_s) * 100),
+    );
     hudDashBar.style.width = `${pct}%`;
   } else {
     hudDashStatus.textContent = 'Sẵn sàng';
@@ -552,7 +667,10 @@ function updateHud(snap: SnapshotRecord): void {
   // Pulse cooldown
   if (snap.player.pulse_cd_s > 0.01) {
     hudPulseStatus.textContent = `${snap.player.pulse_cd_s.toFixed(1)}s`;
-    const pct = Math.max(0, Math.min(100, ((tuning.pulse_cooldown_s - snap.player.pulse_cd_s) / tuning.pulse_cooldown_s) * 100));
+    const pct = Math.max(
+      0,
+      Math.min(100, ((tuning.pulse_cooldown_s - snap.player.pulse_cd_s) / tuning.pulse_cooldown_s) * 100),
+    );
     hudPulseBar.style.width = `${pct}%`;
   } else if (snap.player.carried < tuning.pulse_cost) {
     hudPulseStatus.textContent = `Cần ${tuning.pulse_cost}`;
@@ -562,21 +680,26 @@ function updateHud(snap: SnapshotRecord): void {
     hudPulseBar.style.width = '100%';
   }
 
-  // Contextual lantern deposit prompt: "E — Nạp ánh sáng (x/10)"
-  let nearUnlit = null;
+  // Contextual lantern prompt (deposit / relight / refuel)
+  let nearEligible = null;
+  let bestD = Infinity;
   for (const l of snap.lanterns) {
-    if (
-      !l.lit &&
-      distXZ(snap.player.pos, l.pos) <= tuning.interact_radius &&
-      Math.abs(snap.player.pos[1] - l.pos[1]) <= 2.5
-    ) {
-      nearUnlit = l;
-      break;
+    if (l.lit && l.fuel >= tuning.fuel_max) continue;
+    const d = distXZ(snap.player.pos, l.pos);
+    if (d <= tuning.interact_radius && Math.abs(snap.player.pos[1] - l.pos[1]) <= 2.5 && d < bestD) {
+      bestD = d;
+      nearEligible = l;
     }
   }
-  if (nearUnlit && snap.state === 'playing') {
+  if (nearEligible && snap.state === 'playing') {
     interactPrompt.classList.remove('hidden');
-    promptProgress.textContent = `${nearUnlit.deposited}/${tuning.lantern_cost}`;
+    if (nearEligible.lit) {
+      interactPrompt.textContent = `E — Châm dầu ${nearEligible.id} (${Math.round(nearEligible.fuel)}%)`;
+    } else if (nearEligible.ever_lit) {
+      interactPrompt.textContent = `E — Thắp lại ${nearEligible.id} (${nearEligible.deposited}/${tuning.relight_cost})`;
+    } else {
+      interactPrompt.textContent = `E — Nạp ánh sáng (${nearEligible.deposited}/${tuning.lantern_cost})`;
+    }
   } else {
     interactPrompt.classList.add('hidden');
   }
@@ -584,25 +707,28 @@ function updateHud(snap: SnapshotRecord): void {
 
 function showGameOver(
   result: 'won' | 'lost',
-  reason: 'all_lit' | 'dawn' | 'no_flames',
+  reason: GameOverReason,
   snap: SnapshotRecord,
 ): void {
   mode = 'gameover';
   offscreenArrowEl.classList.add('hidden');
   gameoverOverlay.classList.remove('hidden');
 
-  if (result === 'won') {
+  const litCount = snap.lanterns.filter((l) => l.lit).length;
+  const reqCount = engine.getWinThreshold();
+
+  if (result === 'won' && reason === 'dawn_survived') {
     campaignTotalScore += snap.score;
     if (activeNight === 3) {
       goBadge.textContent = '☀️ BÌNH MINH TRÊN QUẦN ĐẢO';
-      goTitle.textContent = 'Chiến Thắng Toàn Bộ 3 Đêm!';
+      goTitle.textContent = 'Giữ Sáng Thành Công 3 Đêm!';
       goReason.textContent =
-        'Ánh sáng của Đảo Bến, Đảo Cau và Đảo Chuông đã hòa quyện gọi Bình Minh trở về. Ông Đăng tự hào về bạn!';
+        'Bạn đã giữ vững ngọn lửa qua cả Đảo Bến, Đảo Cau và Đảo Chuông cho tới tận Bình Minh!';
       btnNextNight.classList.add('hidden');
     } else {
-      goBadge.textContent = `HOÀN THÀNH ĐÊM ${activeNight}`;
-      goTitle.textContent = `${NIGHT_STORIES[activeNight].islandName} Rực Sáng!`;
-      goReason.textContent = `Toàn bộ ${snap.lanterns.length} Đèn Lồng Lớn đã sáng! Sẵn sàng tiến sang Đêm ${activeNight + 1}.`;
+      goBadge.textContent = `VƯỢT QUA ĐÊM ${activeNight}`;
+      goTitle.textContent = `Bình Minh Đã Tới (${litCount}/${snap.lanterns.length} đèn sáng)!`;
+      goReason.textContent = `Bạn đã giữ đảo sáng vượt ngưỡng ${reqCount}/${snap.lanterns.length} tới bình minh. Sẵn sàng sang Đêm ${activeNight + 1}!`;
       btnNextNight.classList.remove('hidden');
       btnNextNight.textContent = `Tiếp tục sang Đêm ${activeNight + 1} →`;
     }
@@ -612,18 +738,17 @@ function showGameOver(
       goBadge.textContent = `THẤT BẠI · ĐÊM ${activeNight}`;
       goTitle.textContent = 'Ngọn Lửa Đã Tắt';
       goReason.textContent =
-        'Mây đã hết Ngọn Lửa. Hãy tận dụng Lướt (Shift), Bùa Gió và vùng an toàn quanh đèn đã thắp!';
+        'Mây đã hết Ngọn Lửa. Hãy giữ đèn trên 30 dầu để duy trì vùng an toàn và tận dụng Lướt / Tỏa Sáng!';
     } else {
-      goBadge.textContent = `HẾT GIỜ · ĐÊM ${activeNight}`;
-      goTitle.textContent = 'Bình Minh Đã Đến Quá Sớm';
-      goReason.textContent = 'Hết thời gian trước khi toàn bộ Đèn Lồng Lớn kịp thắp sáng.';
+      goBadge.textContent = `BÌNH MINH QUÁ TỐI · ĐÊM ${activeNight}`;
+      goTitle.textContent = `Chỉ còn ${litCount}/${snap.lanterns.length} Đèn Sáng`;
+      goReason.textContent = `Cần giữ ít nhất ${reqCount}/${snap.lanterns.length} đèn đang sáng tại lúc bình minh. Hãy châm dầu kịp thời và đẩy lùi Bóng Mực hút dầu!`;
     }
   }
 
-  const litCount = snap.lanterns.filter((l) => l.lit).length;
   goScore.textContent = String(snap.score);
   goTotalScore.textContent = String(campaignTotalScore);
-  goLanterns.textContent = `${litCount} / ${snap.lanterns.length}`;
+  goLanterns.textContent = `${litCount} / ${snap.lanterns.length} (≥${reqCount})`;
   goTimeFlames.textContent = `${formatTime(snap.time_left_s)} · ${snap.player.flames}🔥`;
 }
 
@@ -652,8 +777,10 @@ function animate(now: number): void {
 
   if (mode === 'playing' || mode === 'paused') {
     if (mode === 'playing') {
-      if (keys.has('ArrowLeft')) camYawDeg = (camYawDeg + 115 * settings.mouseSensitivity * frameDt) % 360;
-      if (keys.has('ArrowRight')) camYawDeg = (camYawDeg - 115 * settings.mouseSensitivity * frameDt + 360) % 360;
+      if (keys.has('ArrowLeft'))
+        camYawDeg = (camYawDeg + 115 * settings.mouseSensitivity * frameDt) % 360;
+      if (keys.has('ArrowRight'))
+        camYawDeg = (camYawDeg - 115 * settings.mouseSensitivity * frameDt + 360) % 360;
     }
 
     accumulator += frameDt;
@@ -667,7 +794,6 @@ function animate(now: number): void {
       stepsThisFrame++;
 
       const snapAfter = engine.getSnapshot();
-      // Jump sound on liftoff
       if (prevGrounded && !snapAfter.player.grounded && snapAfter.player.vel[1] > 1) {
         sfx.playJump();
       }
@@ -676,17 +802,19 @@ function animate(now: number): void {
       if (res.events.length > 0) {
         handleEvents(res.events, snapAfter);
       }
-      if (pausePulse) {
-        // Release pause edge on next tick automatically because pendingPauseToggle is now false
-        break;
-      }
+      if (pausePulse) break;
     }
 
     const snap = engine.getSnapshot();
     updateHud(snap);
     const isMoving =
       mode === 'playing' &&
-      (keys.has('KeyW') || keys.has('KeyS') || keys.has('KeyA') || keys.has('KeyD') || keys.has('ArrowUp') || keys.has('ArrowDown'));
+      (keys.has('KeyW') ||
+        keys.has('KeyS') ||
+        keys.has('KeyA') ||
+        keys.has('KeyD') ||
+        keys.has('ArrowUp') ||
+        keys.has('ArrowDown'));
 
     const arrow = renderer.render(
       snap,
@@ -710,7 +838,6 @@ function animate(now: number): void {
       offscreenArrowEl.classList.add('hidden');
     }
   } else {
-    // Live 3D rotating showcase behind Menu / Intro / GameOver
     camYawDeg = (camYawDeg + 12 * frameDt) % 360;
     renderer.render(
       engine.getSnapshot(),

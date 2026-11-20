@@ -8,6 +8,10 @@
   --accent-danger: #ff5a5f;
 }
 
+body.colorblind {
+  --accent-danger: #ffffff;
+}
+
 * {
   box-sizing: border-box;
   margin: 0;
@@ -118,11 +122,66 @@ body {
   min-width: 160px;
 }
 
+.clock-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.warn-glyph {
+  font-size: 20px;
+  color: var(--accent-danger);
+}
+
 .clock-value {
   font-size: 24px;
   font-weight: 800;
   color: var(--text-main);
   letter-spacing: 0.04em;
+}
+
+.danger-pill {
+  border-color: var(--accent-danger);
+  background: rgba(255, 90, 95, 0.22);
+  color: var(--accent-danger);
+  animation: blinkDanger 1s ease-in-out infinite;
+}
+
+body.colorblind .danger-pill {
+  background: rgba(255, 255, 255, 0.18);
+  border-width: 2px;
+}
+
+.setting-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  cursor: pointer;
+}
+
+.setting-toggle input[type='checkbox'] {
+  width: 20px;
+  height: 20px;
+  accent-color: #00b3ff;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.toggle-title {
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.toggle-sub {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 2px;
 }
 
 .clock-card.danger {
@@ -222,6 +281,54 @@ body {
 
 .btn-menu-mini:hover {
   background: rgba(242, 193, 78, 0.22);
+}
+
+.zoom-controls,
+.preview-zoom-bar {
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  background: var(--bg-glass);
+  border: 1px solid var(--border-glass);
+  border-radius: 12px;
+  padding: 6px 8px;
+  backdrop-filter: blur(8px);
+}
+
+.preview-zoom-bar {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(242, 193, 78, 0.28);
+  margin-bottom: 8px;
+  justify-content: flex-end;
+}
+
+.zoom-hint {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-right: 4px;
+}
+
+.btn-zoom {
+  pointer-events: auto;
+  background: rgba(242, 193, 78, 0.14);
+  border: 1px solid rgba(242, 193, 78, 0.42);
+  color: var(--text-main);
+  border-radius: 8px;
+  padding: 5px 9px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.12s, transform 0.1s;
+}
+
+.btn-zoom:hover {
+  background: rgba(242, 193, 78, 0.32);
+  transform: translateY(-1px);
+}
+
+.btn-zoom:active {
+  transform: translateY(1px);
 }
 
 .interact-prompt {

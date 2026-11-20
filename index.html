@@ -29,6 +29,9 @@
         <div id="hud-wind-pill" class="status-pill wind-pill hidden">
           🍃 Gió mạnh sắp tới!
         </div>
+        <div id="hud-lowfuel-pill" class="status-pill danger-pill hidden">
+          ⚠ Đèn sắp hết dầu!
+        </div>
         <div class="status-pill fps-pill"><span id="hud-fps">60</span> FPS</div>
       </div>
 
@@ -36,26 +39,34 @@
       <div class="hud-top-center">
         <div id="hud-clock-card" class="hud-card clock-card">
           <div id="hud-night-label" class="hud-label">Đêm 1 · Đảo Bến</div>
-          <div id="hud-time" class="clock-value mono">05:00</div>
+          <div class="clock-row">
+            <span id="hud-clock-warn" class="warn-glyph hidden">⚠</span>
+            <span id="hud-time" class="clock-value mono">04:00</span>
+          </div>
         </div>
       </div>
 
       <!-- Top Right: Lanterns k/n + Score + Pause -->
       <div class="hud-top-right">
         <div class="hud-card">
-          <div class="hud-label">Đèn Lồng</div>
+          <div class="hud-label">Đèn Sáng (Cần ≥ <span id="hud-lantern-req">3</span>)</div>
           <div class="hud-value"><span id="hud-lanterns">0</span>/<span id="hud-lantern-total">5</span></div>
         </div>
         <div class="hud-card">
           <div class="hud-label">Điểm</div>
           <div id="hud-score" class="hud-value mono gold">0</div>
         </div>
+        <div class="zoom-controls" title="Cuộn chuột hoặc bấm + / - để phóng to, thu nhỏ">
+          <button id="btn-hud-zoom-in" class="btn-zoom" title="Zoom gần (+)">＋</button>
+          <button id="btn-hud-zoom-reset" class="btn-zoom mono" title="Đặt lại góc nhìn (0)">100%</button>
+          <button id="btn-hud-zoom-out" class="btn-zoom" title="Zoom xa (-)">－</button>
+        </div>
         <button id="btn-hud-pause" class="btn-menu-mini" title="Tạm dừng (Esc / P)">⏸</button>
       </div>
 
       <!-- Interact prompt -->
       <div id="interact-prompt" class="interact-prompt hidden">
-        E — Nạp ánh sáng (<span id="prompt-progress">0/10</span>)
+        E — Nạp ánh sáng (0/10)
       </div>
 
       <!-- Bottom Center: 10-slot Mote Bar -->
@@ -71,6 +82,7 @@
           <span><kbd>Shift</kbd> Lướt</span>
           <span><kbd>E</kbd> Nạp đèn</span>
           <span><kbd>Q</kbd> Tỏa sáng</span>
+          <span><kbd>Lăn chuột</kbd>/<kbd>+ -</kbd> Zoom</span>
           <span><kbd>Esc/P</kbd> Tạm dừng</span>
         </div>
       </div>
@@ -102,7 +114,7 @@
     <div id="start-overlay" class="menu-shell">
       <aside class="menu-panel">
         <div class="menu-header">
-          <div class="modal-badge">BA HÒN ĐẢO · CONTRACT v1.1</div>
+          <div class="modal-badge">BA HÒN ĐẢO · CONTRACT v1.2</div>
           <h1 class="menu-title">Đảo Đèn Lồng</h1>
           <p class="menu-subtitle">
             Chọn Đêm chơi, Nhân vật và Chủ đề hình ảnh (mỗi chủ đề có một loại ma đặc trưng). Nền 3D xem trước trực tiếp!
@@ -142,6 +154,12 @@
       </aside>
 
       <div class="preview-caption">
+        <div class="preview-zoom-bar">
+          <span class="zoom-hint">Lăn chuột / Kéo xoay 3D</span>
+          <button id="btn-menu-zoom-in" class="btn-zoom" title="Zoom gần soi chi tiết nhân vật (+)">＋ Gần</button>
+          <button id="btn-menu-zoom-reset" class="btn-zoom mono" title="Mặc định (0)">100%</button>
+          <button id="btn-menu-zoom-out" class="btn-zoom" title="Zoom xa toàn cảnh đảo (-)">－ Xa</button>
+        </div>
         <div class="preview-tag">XEM TRƯỚC 3D TRỰC TIẾP</div>
         <div id="preview-info" class="preview-info">Đêm 1 · Mây · Ma: Bóng Mực</div>
       </div>
@@ -192,6 +210,13 @@
               <span id="setting-sens-val" class="mono gold">1.0x</span>
             </div>
             <input id="setting-sens" type="range" min="20" max="250" value="100" />
+          </label>
+          <label class="setting-toggle">
+            <div>
+              <div class="toggle-title">Bảng màu dễ phân biệt (Mù màu)</div>
+              <div class="toggle-sub">Bóng Mực viền xanh #00B3FF · Cảnh báo UI trắng #FFFFFF kèm ⚠</div>
+            </div>
+            <input id="setting-colorblind" type="checkbox" />
           </label>
         </div>
         <button id="btn-settings-close" class="btn-primary">Lưu & Đóng</button>

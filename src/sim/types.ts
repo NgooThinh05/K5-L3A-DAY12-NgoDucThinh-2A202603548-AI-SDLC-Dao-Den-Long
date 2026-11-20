@@ -3,15 +3,18 @@ export type Vec3 = [number, number, number];
 
 export type NightNumber = 1 | 2 | 3;
 export type GameState = 'playing' | 'paused' | 'won' | 'lost';
-export type ShadeState = 'spawning' | 'wander' | 'chase' | 'recoil' | 'stunned';
+export type ShadeState = 'spawning' | 'wander' | 'chase' | 'recoil' | 'stunned' | 'drain';
 export type DrifterState = 'idle' | 'chase' | 'flee';
 export type MoteKind = 'random' | 'dropped';
-export type GameOverReason = 'all_lit' | 'dawn' | 'no_flames';
+export type GameOverReason = 'dawn_survived' | 'dawn' | 'no_flames';
 
 export interface ScoreTuning {
   per_mote: number;
   per_lantern: number;
+  per_relight: number;
   per_stun: number;
+  per_stun_drain: number;
+  per_lantern_dawn: number;
   per_second_left: number;
   per_flame_left: number;
 }
@@ -22,10 +25,18 @@ export interface GameTuning {
   dash_duration_s: number;
   dash_cooldown_s: number;
   carry_capacity: number;
+  capacity_max: number;
   lantern_cost: number;
+  relight_cost: number;
   lantern_count_night1: number;
   lantern_count_night2?: number;
   lantern_count_night3?: number;
+  fuel_max: number;
+  fuel_decay_per_s: number;
+  fuel_per_mote: number;
+  low_fuel_threshold: number;
+  drain_per_s: number;
+  win_ratio: number;
   pickup_radius: number;
   interact_radius: number;
   pulse_cost: number;
@@ -89,6 +100,7 @@ export interface ScenarioPlayer {
   dash_cd_ticks?: number;
   pulse_cd_ticks?: number;
   charm_ticks?: number;
+  successful_lights?: number;
 }
 
 export type ScenarioMote =
@@ -100,6 +112,7 @@ export interface ScenarioShade {
   pos: Vec3;
   state?: ShadeState;
   state_ticks_left?: number;
+  target_lantern_id?: string;
 }
 
 export interface ScenarioDrifter {
@@ -121,6 +134,8 @@ export interface ScenarioLantern {
   pos?: Vec3;
   deposited?: number;
   lit?: boolean;
+  fuel?: number;
+  ever_lit?: boolean;
 }
 
 export interface ScenarioFile {
@@ -148,6 +163,7 @@ export interface PlayerSnapshot {
   grounded: boolean;
   flames: number;
   carried: number;
+  capacity: number;
   invuln: boolean;
   dash_cd_s: number;
   pulse_cd_s: number;
@@ -159,6 +175,9 @@ export interface LanternSnapshot {
   pos: Vec3;
   lit: boolean;
   deposited: number;
+  fuel: number;
+  ever_lit: boolean;
+  relit_count: number;
 }
 
 export interface ShadeSnapshot {
@@ -209,7 +228,10 @@ export type SimEventPayload =
   | { name: 'night_start'; data: { night: NightNumber } }
   | { name: 'mote_picked'; data: { carried: number } }
   | { name: 'deposit'; data: { lantern_id: string; amount: number; deposited: number } }
-  | { name: 'lantern_lit'; data: { lantern_id: string } }
+  | { name: 'lantern_lit'; data: { lantern_id: string; relight: boolean } }
+  | { name: 'refuel'; data: { lantern_id: string; amount: number; fuel: number } }
+  | { name: 'lantern_out'; data: { lantern_id: string } }
+  | { name: 'fuel_drain'; data: { lantern_id: string; shade_id: string; fuel: number } }
   | { name: 'pulse'; data: { stunned_ids: string[] } }
   | { name: 'dash'; data: Record<string, never> }
   | { name: 'charm_picked'; data: { charm_id: string; charm_ticks: number } }

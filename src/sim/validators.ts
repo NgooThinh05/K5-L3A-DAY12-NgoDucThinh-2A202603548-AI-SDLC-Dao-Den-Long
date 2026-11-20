@@ -27,6 +27,7 @@ const VALID_SHADE_STATES = new Set<ShadeState>([
   'chase',
   'recoil',
   'stunned',
+  'drain',
 ]);
 const VALID_DRIFTER_STATES = new Set<DrifterState>(['idle', 'chase', 'flee']);
 const VALID_MOTE_KINDS = new Set<MoteKind>(['random', 'dropped']);
@@ -162,6 +163,12 @@ export function validateScenarioFile(raw: unknown): ScenarioFile {
         'scenario.player.charm_ticks',
       );
     }
+    if (raw.player.successful_lights !== undefined) {
+      scenario.player.successful_lights = assertNonNegInt(
+        raw.player.successful_lights,
+        'scenario.player.successful_lights',
+      );
+    }
   }
 
   for (const flag of ['random_motes', 'random_shades', 'random_drifters', 'wind_enabled'] as const) {
@@ -221,8 +228,11 @@ export function validateScenarioFile(raw: unknown): ScenarioFile {
       }
       if (s.state !== undefined && !VALID_SHADE_STATES.has(s.state as ShadeState)) {
         throw new ValidationError(
-          `scenario.shades[${i}].state must be one of spawning|wander|chase|recoil|stunned`,
+          `scenario.shades[${i}].state must be one of spawning|wander|chase|recoil|stunned|drain`,
         );
+      }
+      if (s.target_lantern_id !== undefined && (typeof s.target_lantern_id !== 'string' || s.target_lantern_id.length === 0)) {
+        throw new ValidationError(`scenario.shades[${i}].target_lantern_id must be a non-empty string`);
       }
       const shade: ScenarioShade = { pos };
       if (s.id !== undefined) shade.id = s.id;
@@ -232,6 +242,9 @@ export function validateScenarioFile(raw: unknown): ScenarioFile {
           s.state_ticks_left,
           `scenario.shades[${i}].state_ticks_left`,
         );
+      }
+      if (s.target_lantern_id !== undefined) {
+        shade.target_lantern_id = s.target_lantern_id;
       }
       shades.push(shade);
     }
@@ -324,6 +337,18 @@ export function validateScenarioFile(raw: unknown): ScenarioFile {
           throw new ValidationError(`scenario.lanterns[${i}].lit must be a boolean`);
         }
         entry.lit = l.lit;
+      }
+      if (l.fuel !== undefined) {
+        if (!isFiniteNumber(l.fuel) || l.fuel < 0) {
+          throw new ValidationError(`scenario.lanterns[${i}].fuel must be a non-negative finite number`);
+        }
+        entry.fuel = l.fuel;
+      }
+      if (l.ever_lit !== undefined) {
+        if (typeof l.ever_lit !== 'boolean') {
+          throw new ValidationError(`scenario.lanterns[${i}].ever_lit must be a boolean`);
+        }
+        entry.ever_lit = l.ever_lit;
       }
       lanterns.push(entry);
     }
