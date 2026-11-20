@@ -83,6 +83,7 @@ export class GameRenderer {
   private readonly dirLight: THREE.DirectionalLight;
 
   private envGroup: THREE.Group | null = null;
+  private themeDecorGroup: THREE.Group | null = null;
   private cloudGroup: THREE.Group | null = null;
   private previewGhostGroup: THREE.Group | null = null;
   private windLeavesGroup: THREE.Group;
@@ -91,6 +92,14 @@ export class GameRenderer {
   private characterCfg: CharacterConfig = getCharacterConfig('may');
   private mapCfg: MapThemeConfig = getMapThemeConfig('dao_ben');
   private colorblindMode = false;
+  private reduceMotion = false;
+  private hitShakeTimer = 0;
+
+  // Instanced meshes for high-FPS 200-shade + 100-mote benchmark mode
+  private benchShadeBodies: THREE.InstancedMesh | null = null;
+  private benchShadeEyes: THREE.InstancedMesh | null = null;
+  private benchMotes: THREE.InstancedMesh | null = null;
+  private readonly benchDummy = new THREE.Object3D();
 
   // Player
   private readonly playerGroup = new THREE.Group();
@@ -259,6 +268,191 @@ export class GameRenderer {
 
   public setColorblindMode(enabled: boolean): void {
     this.colorblindMode = enabled;
+  }
+
+  public setReduceMotion(enabled: boolean): void {
+    this.reduceMotion = enabled;
+    if (enabled) this.hitShakeTimer = 0;
+  }
+
+  public triggerHitShake(): void {
+    if (!this.reduceMotion) {
+      this.hitShakeTimer = 0.25;
+    }
+  }
+
+  public getRendererInfo(): string {
+    const gl = this.renderer.getContext();
+    const dbg = gl.getExtension('WEBGL_debug_renderer_info');
+    const gpu = dbg
+      ? String(gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL))
+      : String(gl.getParameter(gl.RENDERER));
+    return `Three.js r${THREE.REVISION} / WebGL2 (${gpu})`;
+  }
+
+  public captureScreenshotDataUrl(): string {
+    return this.renderer.domElement.toDataURL('image/png');
+  }
+
+  public projectWorldToEdgeArrow(worldPos: Vec3, label: string): OffscreenArrowState {
+    const v = new THREE.Vector3(worldPos[0], worldPos[1] + 1.5, worldPos[2]);
+    const ndc = v.project(this.camera);
+    const isBehind = ndc.z > 1;
+    let sx = isBehind ? -ndc.x : ndc.x;
+    let sy = isBehind ? -ndc.y : ndc.y;
+    const len = Math.hypot(sx, sy) || 1;
+    sx /= len;
+    sy /= len;
+    const w = this.container.clientWidth;
+    const h = this.container.clientHeight;
+    const pad = 52;
+    return {
+      visible: true,
+      x: Math.max(pad, Math.min(w - pad, (sx * 0.45 + 0.5) * w)),
+      y: Math.max(pad + 44, Math.min(h - pad - 44, (-sy * 0.45 + 0.5) * h)),
+      angleDeg: (Math.atan2(sx, sy) * 180) / Math.PI,
+      lanternId: label,
+    };
+  }
+
+  public setupBenchScene(
+    lanterns: Array<{ id: string; pos: Vec3; lit: boolean; fuel: number }>,
+    shadeCount: number,
+    moteCount: number,
+  ): void {
+    // Render at exact native 1280x720 resolution in benchmark mode regardless of OS HiDPI scaling
+    this.renderer.setPixelRatio(1);
+    this.renderer.setSize(this.container.clientWidth, this.container.clientHeight);
+    this.resetVisuals();
+    if (this.themeDecorGroup) this.themeDecorGroup.visible = false;
+    this.compassGroup.visible = false;
+    this.windLeavesGroup.visible = false;
+    this.playerGroup.position.set(0, 0, 0);
+    this.playerBodyGroup.rotation.y = 0;
+
+    // Create 5 standard Night 1 lanterns (L1-L3 lit with full fuel=100)
+    let litCount = 0;
+    for (const l of lanterns) {
+      const vis = this.createLanternVisual(l.id, l.pos);
+      if (l.lit) {
+        litCount++;
+        vis.paperMesh.scale.set(1, 1, 1);
+        vis.tearGroup.visible = false;
+        vis.paperMat.color.setHex(this.mapCfg.lanternCoreColor);
+        vis.paperMat.emissive.setHex(this.mapCfg.lanternLitColor);
+        vis.paperMat.emissiveIntensity = 1.9;
+        vis.pointLight.intensity = 16;
+        vis.safeRing.visible = true;
+        vis.progressRing.visible = false;
+        vis.fuelBarGroup.visible = true;
+      } else {
+        vis.paperMesh.scale.set(1, 0.8, 1);
+        vis.tearGroup.visible = true;
+        vis.safeRing.visible = false;
+        vis.progressRing.visible = true;
+        vis.fuelBarGroup.visible = false;
+      }
+    }
+
+    const litRatio = litCount / Math.max(1, lanterns.length);
+    this.ambientLight.intensity = 0.15 + 0.55 * litRatio;
+    const skyColor = new THREE.Color(this.mapCfg.skyDark).lerp(
+      new THREE.Color(this.mapCfg.skyLit),
+      litRatio,
+    );
+    this.scene.background = skyColor;
+    this.fog.color.setHex(this.mapCfg.fogColor).lerp(skyColor, litRatio * 0.5);
+    this.fog.density =
+      this.mapCfg.fogDarkDensity + (this.mapCfg.fogLitDensity - this.mapCfg.fogDarkDensity) * litRatio;
+
+    // GPU-instanced 200 Shades + 100 Motes for crisp 60+ FPS at 1280x720
+    const shadeBodyGeo = new THREE.ConeGeometry(0.62, 1.85, 8);
+    const shadeBodyMat = new THREE.MeshStandardMaterial({
+      color: 0x120a1a,
+      emissive: 0x7a3cff,
+      emissiveIntensity: 0.65,
+      roughness: 0.4,
+    });
+    this.benchShadeBodies = new THREE.InstancedMesh(shadeBodyGeo, shadeBodyMat, shadeCount);
+    this.benchShadeBodies.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    this.scene.add(this.benchShadeBodies);
+
+    const eyeGeo = new THREE.SphereGeometry(0.11, 6, 6);
+    const eyeMat = new THREE.MeshBasicMaterial({ color: 0xd9a8ff });
+    this.benchShadeEyes = new THREE.InstancedMesh(eyeGeo, eyeMat, shadeCount * 2);
+    this.benchShadeEyes.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    this.scene.add(this.benchShadeEyes);
+
+    this.benchMotes = new THREE.InstancedMesh(this.moteGeo, this.moteMat, moteCount);
+    this.benchMotes.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    this.scene.add(this.benchMotes);
+  }
+
+  public renderBenchFrame(
+    shades: Array<{ x: number; y: number; z: number; angle: number }>,
+    motes: Array<{ x: number; z: number; phase: number }>,
+    camPos: Vec3,
+    elapsedS: number,
+    frameDt: number,
+  ): void {
+    this.clockTime += frameDt;
+    if (this.cloudGroup) this.cloudGroup.rotation.y += frameDt * 0.012;
+
+    if (this.benchShadeBodies && this.benchShadeEyes) {
+      for (let i = 0; i < shades.length; i++) {
+        const s = shades[i];
+        const hover = Math.sin(elapsedS * 4 + s.x) * 0.14;
+        const yaw = Math.atan2(Math.cos(s.angle), Math.sin(s.angle));
+        this.benchDummy.position.set(s.x, s.y + 0.25 + hover, s.z);
+        this.benchDummy.rotation.set(0, yaw, 0);
+        this.benchDummy.scale.set(1, 1, 1);
+        this.benchDummy.updateMatrix();
+        this.benchShadeBodies.setMatrixAt(i, this.benchDummy.matrix);
+
+        const sinY = Math.sin(yaw);
+        const cosY = Math.cos(yaw);
+        for (let e = 0; e < 2; e++) {
+          const sx = e === 0 ? -0.18 : 0.18;
+          const sz = 0.36;
+          this.benchDummy.position.set(
+            s.x + sx * cosY + sz * sinY,
+            s.y + 0.5 + hover,
+            s.z - sx * sinY + sz * cosY,
+          );
+          this.benchDummy.rotation.set(0, 0, 0);
+          this.benchDummy.updateMatrix();
+          this.benchShadeEyes.setMatrixAt(i * 2 + e, this.benchDummy.matrix);
+        }
+      }
+      this.benchShadeBodies.instanceMatrix.needsUpdate = true;
+      this.benchShadeEyes.instanceMatrix.needsUpdate = true;
+    }
+
+    if (this.benchMotes) {
+      for (let i = 0; i < motes.length; i++) {
+        const m = motes[i];
+        this.benchDummy.position.set(
+          m.x,
+          0.72 + Math.sin(elapsedS * 3.2 + m.phase) * 0.2,
+          m.z,
+        );
+        this.benchDummy.rotation.set(0, elapsedS * 1.8 + m.phase, 0);
+        this.benchDummy.scale.set(1, 1, 1);
+        this.benchDummy.updateMatrix();
+        this.benchMotes.setMatrixAt(i, this.benchDummy.matrix);
+      }
+      this.benchMotes.instanceMatrix.needsUpdate = true;
+    }
+
+    for (const vis of this.lanternVisuals.values()) {
+      if (vis.fuelBarGroup.visible) {
+        vis.fuelBarGroup.lookAt(camPos[0], camPos[1], camPos[2]);
+      }
+    }
+
+    this.camera.position.set(camPos[0], camPos[1], camPos[2]);
+    this.camera.lookAt(0, 0, 0);
+    this.renderer.render(this.scene, this.camera);
   }
 
   public adjustZoom(delta: number): number {
@@ -490,6 +684,10 @@ export class GameRenderer {
       group.add(this.buildJumpPadMesh(pad.pos));
     }
 
+    // Rich theme-specific 3D props & scenery across the island (isolated from benchmark mode)
+    this.themeDecorGroup = this.buildThemeDecorations(night, cfg, mapDef);
+    group.add(this.themeDecorGroup);
+
     // Starfield dome
     const count = 240;
     const positions = new Float32Array(count * 3);
@@ -522,10 +720,17 @@ export class GameRenderer {
     cfg: MapThemeConfig,
     skipFn?: (x: number, z: number) => boolean,
   ): void {
-    const postMat = new THREE.MeshStandardMaterial({ color: cfg.rimPostColor, roughness: 0.82 });
+    const postMat = new THREE.MeshStandardMaterial({ color: cfg.rimPostColor, roughness: 0.8 });
+    const darkRoofMat = new THREE.MeshStandardMaterial({ color: 0x24171f, roughness: 0.65 });
     const leafMat = new THREE.MeshStandardMaterial({
-      color: cfg.propStyle === 'snow_peaks' ? 0xcbe8ff : 0x45b87c,
-      roughness: 0.65,
+      color: cfg.propStyle === 'snow_peaks' ? 0xd9f0ff : 0x3db87a,
+      roughness: 0.62,
+    });
+    const glowMat = new THREE.MeshStandardMaterial({
+      color: cfg.lanternCoreColor,
+      emissive: cfg.lanternLitColor,
+      emissiveIntensity: 1.35,
+      roughness: 0.25,
     });
 
     for (let i = 0; i < count; i++) {
@@ -535,33 +740,540 @@ export class GameRenderer {
       if (skipFn && skipFn(x, z)) continue;
 
       if (cfg.propStyle === 'standard') {
-        const post = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.3, 0.85, 6), postMat);
-        post.position.set(x, 0.42, z);
+        // Wooden dock bollard + every 3rd post has a small glowing harbor lantern
+        const post = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.28, 1.05, 8), postMat);
+        post.position.set(x, 0.52, z);
         group.add(post);
-      } else if (cfg.propStyle === 'bamboo_grove') {
-        const h = 3.8 + (i % 3) * 1.1;
-        const stalk = new THREE.Mesh(new THREE.CylinderGeometry(0.11, 0.14, h, 6), postMat);
-        stalk.position.set(x, h / 2, z);
-        group.add(stalk);
-        const top = new THREE.Mesh(new THREE.ConeGeometry(0.7, 1.3, 6), leafMat);
-        top.position.set(x, h + 0.3, z);
-        group.add(top);
-      } else if (cfg.propStyle === 'snow_peaks') {
-        const pine = new THREE.Mesh(new THREE.ConeGeometry(1.1, 2.8, 7), leafMat);
-        pine.position.set(x, 1.5, z);
-        group.add(pine);
-      } else {
-        const pillar = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.24, 3.0, 8), postMat);
-        pillar.position.set(x, 1.5, z);
-        group.add(pillar);
-        const cap = new THREE.Mesh(
-          new THREE.BoxGeometry(0.75, 0.2, 0.75),
-          new THREE.MeshStandardMaterial({ color: 0x26171d }),
-        );
-        cap.position.set(x, 3.1, z);
+
+        const cap = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.26, 0.12, 8), darkRoofMat);
+        cap.position.set(x, 1.08, z);
         group.add(cap);
+
+        if (i % 3 === 0) {
+          const orb = new THREE.Mesh(new THREE.SphereGeometry(0.16, 10, 8), glowMat);
+          orb.position.set(x, 1.26, z);
+          group.add(orb);
+        }
+      } else if (cfg.propStyle === 'bamboo_grove') {
+        // Multi-stalk bamboo clump with node rings & layered emerald canopy
+        for (let b = 0; b < 3; b++) {
+          const ox = Math.cos(a + b * 2.1) * (b === 0 ? 0 : 0.42);
+          const oz = Math.sin(a + b * 2.1) * (b === 0 ? 0 : 0.42);
+          const h = 3.6 + ((i + b) % 3) * 1.15;
+          const stalk = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.13, h, 7), postMat);
+          stalk.position.set(x + ox, h / 2, z + oz);
+          stalk.rotation.z = (b - 1) * 0.04;
+          group.add(stalk);
+
+          const crown = new THREE.Mesh(new THREE.ConeGeometry(0.68, 1.35, 7), leafMat);
+          crown.position.set(x + ox, h + 0.35, z + oz);
+          group.add(crown);
+        }
+      } else if (cfg.propStyle === 'snow_peaks') {
+        // Multi-tiered snow-laden pine tree + glowing ice crystal shard at base
+        const trunk = new THREE.Mesh(
+          new THREE.CylinderGeometry(0.16, 0.24, 0.9, 7),
+          new THREE.MeshStandardMaterial({ color: 0x4a382e, roughness: 0.85 }),
+        );
+        trunk.position.set(x, 0.45, z);
+        group.add(trunk);
+
+        for (let tier = 0; tier < 3; tier++) {
+          const cone = new THREE.Mesh(
+            new THREE.ConeGeometry(1.18 - tier * 0.26, 1.45 - tier * 0.2, 8),
+            leafMat,
+          );
+          cone.position.set(x, 1.15 + tier * 0.82, z);
+          group.add(cone);
+        }
+      } else {
+        // Crimson shrine pillar with crossbeam & hanging festival red lantern
+        const pillar = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.25, 3.2, 10), postMat);
+        pillar.position.set(x, 1.6, z);
+        group.add(pillar);
+
+        const cap = new THREE.Mesh(new THREE.BoxGeometry(0.95, 0.22, 0.55), darkRoofMat);
+        cap.position.set(x, 3.28, z);
+        cap.rotation.y = -a;
+        group.add(cap);
+
+        if (i % 2 === 0) {
+          const lantern = new THREE.Mesh(
+            new THREE.SphereGeometry(0.22, 10, 8),
+            new THREE.MeshStandardMaterial({
+              color: 0xff5a4d,
+              emissive: 0xff3b2f,
+              emissiveIntensity: 1.5,
+              roughness: 0.3,
+            }),
+          );
+          lantern.scale.set(0.9, 1.25, 0.9);
+          lantern.position.set(x - Math.cos(a) * 0.35, 2.75, z - Math.sin(a) * 0.35);
+          group.add(lantern);
+        }
       }
     }
+  }
+
+  /**
+   * Builds rich, theme-specific 3D decorative scenery across the island interior & shoreline.
+   * Carefully avoids spawn (0,0,0), lantern shrines, jump pads, charms, bridge, and ramps.
+   */
+  private buildThemeDecorations(
+    night: NightNumber,
+    cfg: MapThemeConfig,
+    mapDef: ReturnType<typeof getNightMapDef>,
+  ): THREE.Group {
+    const decor = new THREE.Group();
+
+    // Helper: check if candidate (x, z) is safely away from all interactive gameplay objects
+    const isSafeSpot = (x: number, z: number, minLanternDist = 4.6): boolean => {
+      // Keep central spawn plaza clear
+      if (Math.hypot(x, z) < 6.2) return false;
+      // Night 2 bridge corridor & second island center
+      if (night === 2) {
+        if (x > 20 && x < 50 && Math.abs(z) < 5.5) return false;
+        if (Math.hypot(x - 70, z) < 5.5) return false;
+      }
+      // Night 3 tier boundaries & ramps (30° and 150°)
+      if (night === 3) {
+        const r0 = Math.hypot(x, z);
+        if (r0 < 26.5) return false; // Keep upper tiers & ramp landings clear
+        const deg = ((Math.atan2(z, x) * 180) / Math.PI + 360) % 360;
+        if (Math.abs(deg - 30) < 14 || Math.abs(deg - 150) < 14) return false;
+      }
+      for (const l of mapDef.lanterns) {
+        if (Math.hypot(x - l.pos[0], z - l.pos[2]) < minLanternDist) return false;
+      }
+      for (const p of mapDef.jumpPads) {
+        if (Math.hypot(x - p.pos[0], z - p.pos[2]) < 4.2) return false;
+      }
+      for (const c of mapDef.charms) {
+        if (Math.hypot(x - c.pos[0], z - c.pos[2]) < 4.0) return false;
+      }
+      return true;
+    };
+
+    // Collect island centers & radii for the current night
+    const islands: Array<{ cx: number; cz: number; maxR: number }> =
+      night === 1
+        ? [{ cx: 0, cz: 0, maxR: 35.5 }]
+        : night === 2
+          ? [
+              { cx: 0, cz: 0, maxR: 23.5 },
+              { cx: 70, cz: 0, maxR: 23.5 },
+            ]
+          : [{ cx: 0, cz: 0, maxR: 39.5 }];
+
+    if (cfg.propStyle === 'standard') {
+      // --- CHỦ ĐỀ 1: CỔ TÍCH CHUẨN (Đảo Bến Nước Việt Nam: Cây cổ thụ treo đèn, Hồ sen, Đèn đá, Thuyền nan) ---
+      const barkMat = new THREE.MeshStandardMaterial({ color: 0x5c3e28, roughness: 0.85 });
+      const foliageDarkMat = new THREE.MeshStandardMaterial({ color: 0x26634d, roughness: 0.7 });
+      const foliageLightMat = new THREE.MeshStandardMaterial({ color: 0x3b8a68, roughness: 0.65 });
+      const stoneMat = new THREE.MeshStandardMaterial({ color: 0x7c827a, roughness: 0.88 });
+      const lotusPetalMat = new THREE.MeshStandardMaterial({
+        color: 0xffa6c9,
+        emissive: 0xd94c86,
+        emissiveIntensity: 0.55,
+        roughness: 0.4,
+      });
+      const lotusPadMat = new THREE.MeshStandardMaterial({ color: 0x2e7d52, roughness: 0.72 });
+      const warmOrbMat = new THREE.MeshStandardMaterial({
+        color: 0xfff0b8,
+        emissive: 0xffad3b,
+        emissiveIntensity: 1.8,
+      });
+
+      for (const isl of islands) {
+        // 1. Banyan / Fairy Lantern Trees & Stone Garden Lanterns
+        const treeCount = night === 2 ? 7 : 12;
+        for (let i = 0; i < treeCount; i++) {
+          const a = (i / treeCount) * Math.PI * 2 + 0.37;
+          const r = (i % 2 === 0 ? 0.44 : 0.78) * isl.maxR;
+          const x = isl.cx + Math.cos(a) * r;
+          const z = isl.cz + Math.sin(a) * r;
+          if (!isSafeSpot(x, z)) continue;
+
+          const tree = new THREE.Group();
+          tree.position.set(x, 0, z);
+          tree.rotation.y = a;
+
+          // Curved trunk + root base
+          const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.24, 0.42, 2.3, 8), barkMat);
+          trunk.position.y = 1.15;
+          trunk.castShadow = true;
+          tree.add(trunk);
+
+          // 3 layered rounded foliage puffs
+          for (const [ox, oy, oz, rad, mat] of [
+            [0, 2.65, 0, 1.35, foliageDarkMat],
+            [0.65, 2.35, 0.35, 0.95, foliageLightMat],
+            [-0.6, 2.4, -0.3, 0.9, foliageLightMat],
+          ] as const) {
+            const canopy = new THREE.Mesh(new THREE.DodecahedronGeometry(rad, 1), mat);
+            canopy.scale.set(1.1, 0.72, 1.1);
+            canopy.position.set(ox, oy, oz);
+            canopy.castShadow = true;
+            tree.add(canopy);
+          }
+
+          // Hanging tiny glowing lantern from branch
+          const cord = new THREE.Mesh(new THREE.CylinderGeometry(0.015, 0.015, 0.55, 6), barkMat);
+          cord.position.set(0.75, 1.85, 0.25);
+          tree.add(cord);
+
+          const miniLantern = new THREE.Mesh(new THREE.SphereGeometry(0.17, 10, 8), warmOrbMat);
+          miniLantern.scale.set(0.9, 1.2, 0.9);
+          miniLantern.position.set(0.75, 1.52, 0.25);
+          tree.add(miniLantern);
+
+          // Mossy rocks & glowing lotus blossom at base
+          const rock = new THREE.Mesh(new THREE.DodecahedronGeometry(0.45, 0), stoneMat);
+          rock.scale.set(1.2, 0.65, 0.95);
+          rock.position.set(-0.55, 0.18, 0.35);
+          tree.add(rock);
+
+          const pad = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.42, 0.03, 12), lotusPadMat);
+          pad.position.set(0.55, 0.03, -0.45);
+          tree.add(pad);
+
+          const lotus = new THREE.Mesh(new THREE.OctahedronGeometry(0.18, 1), lotusPetalMat);
+          lotus.scale.set(1.2, 0.75, 1.2);
+          lotus.position.set(0.55, 0.12, -0.45);
+          tree.add(lotus);
+
+          decor.add(tree);
+        }
+
+        // 2. Moored Traditional Wooden Sampan Boats (Thuyền nan đậu bến nước) at shoreline
+        const boatAngles = night === 2 ? [1.2, 4.3] : [0.55, 2.15, 3.75, 5.25];
+        for (const ba of boatAngles) {
+          const bx = isl.cx + Math.cos(ba) * (isl.maxR + 3.4);
+          const bz = isl.cz + Math.sin(ba) * (isl.maxR + 3.4);
+          const boat = new THREE.Group();
+          boat.position.set(bx, -0.25, bz);
+          boat.rotation.y = -ba + Math.PI / 2;
+
+          const hull = new THREE.Mesh(new THREE.CapsuleGeometry(0.55, 2.2, 6, 12), barkMat);
+          hull.rotation.z = Math.PI / 2;
+          hull.scale.set(1.0, 0.48, 0.85);
+          boat.add(hull);
+
+          const canopy = new THREE.Mesh(
+            new THREE.CylinderGeometry(0.52, 0.52, 1.15, 10, 1, false, 0, Math.PI),
+            new THREE.MeshStandardMaterial({ color: 0xc9b48a, roughness: 0.85, side: THREE.DoubleSide }),
+          );
+          canopy.rotation.z = Math.PI / 2;
+          canopy.position.y = 0.22;
+          boat.add(canopy);
+
+          const bowLight = new THREE.Mesh(new THREE.SphereGeometry(0.14, 8, 8), warmOrbMat);
+          bowLight.position.set(1.35, 0.36, 0);
+          boat.add(bowLight);
+
+          decor.add(boat);
+        }
+      }
+    } else if (cfg.propStyle === 'bamboo_grove') {
+      // --- CHỦ ĐỀ 2: RỪNG TRÚC SƯƠNG (Khóm trúc ngọc, Nấm linh chi phát sáng, Đèn đá Tōrō rêu phong, Cổng tre) ---
+      const bambooMat = new THREE.MeshStandardMaterial({ color: 0x2e8559, roughness: 0.65 });
+      const bambooNodeMat = new THREE.MeshStandardMaterial({ color: 0x62c48d, roughness: 0.55 });
+      const leafMat = new THREE.MeshStandardMaterial({ color: 0x45c988, roughness: 0.6 });
+      const stoneMossMat = new THREE.MeshStandardMaterial({ color: 0x4b695b, roughness: 0.88 });
+      const mushroomStemMat = new THREE.MeshStandardMaterial({ color: 0xd9f7e8, roughness: 0.6 });
+      const mushroomCapMat = new THREE.MeshStandardMaterial({
+        color: 0x5effc8,
+        emissive: 0x18c98d,
+        emissiveIntensity: 1.4,
+        roughness: 0.3,
+      });
+
+      for (const isl of islands) {
+        const spotCount = night === 2 ? 9 : 15;
+        for (let i = 0; i < spotCount; i++) {
+          const a = (i / spotCount) * Math.PI * 2 + 0.24;
+          const r = (i % 3 === 0 ? 0.38 : i % 3 === 1 ? 0.64 : 0.84) * isl.maxR;
+          const x = isl.cx + Math.cos(a) * r;
+          const z = isl.cz + Math.sin(a) * r;
+          if (!isSafeSpot(x, z)) continue;
+
+          const cluster = new THREE.Group();
+          cluster.position.set(x, 0, z);
+          cluster.rotation.y = a;
+
+          if (i % 2 === 0) {
+            // Multi-stalk bamboo grove with node rings + glowing bioluminescent mushrooms at base
+            for (let s = 0; s < 4; s++) {
+              const sx = (s - 1.5) * 0.36;
+              const sz = ((s % 2) - 0.5) * 0.34;
+              const h = 3.4 + (s % 3) * 1.1;
+              const stalk = new THREE.Mesh(new THREE.CylinderGeometry(0.085, 0.12, h, 8), bambooMat);
+              stalk.position.set(sx, h / 2, sz);
+              stalk.rotation.z = (s - 1.5) * 0.045;
+              stalk.castShadow = true;
+              cluster.add(stalk);
+
+              // Bamboo joint rings
+              for (let ny = 0.9; ny < h - 0.3; ny += 0.95) {
+                const ring = new THREE.Mesh(new THREE.TorusGeometry(0.11, 0.018, 6, 12), bambooNodeMat);
+                ring.rotation.x = Math.PI / 2;
+                ring.position.set(sx, ny, sz);
+                cluster.add(ring);
+              }
+
+              const foliage = new THREE.Mesh(new THREE.ConeGeometry(0.75, 1.4, 7), leafMat);
+              foliage.position.set(sx, h + 0.35, sz);
+              cluster.add(foliage);
+            }
+
+            // Glowing mushroom trio at bamboo roots
+            for (const [mx, mz, sc] of [
+              [0.52, 0.4, 1.0],
+              [0.78, 0.22, 0.68],
+              [-0.48, 0.42, 0.82],
+            ] as const) {
+              const stem = new THREE.Mesh(
+                new THREE.CylinderGeometry(0.05 * sc, 0.08 * sc, 0.36 * sc, 8),
+                mushroomStemMat,
+              );
+              stem.position.set(mx, 0.18 * sc, mz);
+              cluster.add(stem);
+
+              const cap = new THREE.Mesh(
+                new THREE.SphereGeometry(0.24 * sc, 12, 8, 0, Math.PI * 2, 0, Math.PI * 0.6),
+                mushroomCapMat,
+              );
+              cap.position.set(mx, 0.32 * sc, mz);
+              cluster.add(cap);
+            }
+          } else {
+            // Mossy Stone Garden Lantern (Đèn đá rêu phong phát sáng ngọc lục bảo) + boulder
+            const ped = new THREE.Mesh(new THREE.CylinderGeometry(0.32, 0.44, 0.35, 6), stoneMossMat);
+            ped.position.y = 0.175;
+            cluster.add(ped);
+
+            const post = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.2, 0.85, 6), stoneMossMat);
+            post.position.y = 0.75;
+            cluster.add(post);
+
+            const core = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.22, 0.38, 6), mushroomCapMat);
+            core.position.y = 1.35;
+            cluster.add(core);
+
+            const roof = new THREE.Mesh(new THREE.ConeGeometry(0.58, 0.42, 6), stoneMossMat);
+            roof.position.y = 1.72;
+            cluster.add(roof);
+
+            const boulder = new THREE.Mesh(new THREE.DodecahedronGeometry(0.55, 0), stoneMossMat);
+            boulder.scale.set(1.3, 0.72, 1.0);
+            boulder.position.set(0.68, 0.24, -0.25);
+            cluster.add(boulder);
+          }
+
+          decor.add(cluster);
+        }
+      }
+    } else if (cfg.propStyle === 'snow_peaks') {
+      // --- CHỦ ĐỀ 3: ĐỈNH TUYẾT BĂNG (Thông tuyết nhiều tầng, Cụm tinh thể pha lê băng phát sáng, Người tuyết đội nón lá) ---
+      const snowMat = new THREE.MeshStandardMaterial({ color: 0xeaf6ff, roughness: 0.55 });
+      const pineDarkMat = new THREE.MeshStandardMaterial({ color: 0x386685, roughness: 0.7 });
+      const crystalMat = new THREE.MeshStandardMaterial({
+        color: 0xa6ecff,
+        emissive: 0x29b6f6,
+        emissiveIntensity: 1.35,
+        roughness: 0.18,
+        metalness: 0.25,
+        transparent: true,
+        opacity: 0.88,
+      });
+      const scarfRedMat = new THREE.MeshStandardMaterial({ color: 0xd92b3a, roughness: 0.5 });
+      const hatStrawMat = new THREE.MeshStandardMaterial({ color: 0xc9b48a, roughness: 0.72 });
+
+      for (const isl of islands) {
+        const spotCount = night === 2 ? 9 : 15;
+        for (let i = 0; i < spotCount; i++) {
+          const a = (i / spotCount) * Math.PI * 2 + 0.19;
+          const r = (i % 3 === 0 ? 0.4 : i % 3 === 1 ? 0.65 : 0.83) * isl.maxR;
+          const x = isl.cx + Math.cos(a) * r;
+          const z = isl.cz + Math.sin(a) * r;
+          if (!isSafeSpot(x, z)) continue;
+
+          const node = new THREE.Group();
+          node.position.set(x, 0, z);
+          node.rotation.y = a;
+
+          if (i % 3 === 0) {
+            // Glowing Aurora Ice Crystal Cluster (Cụm tinh thể băng cực quang)
+            const snowDrift = new THREE.Mesh(new THREE.SphereGeometry(0.85, 12, 8), snowMat);
+            snowDrift.scale.set(1.2, 0.35, 1.1);
+            snowDrift.position.y = 0.08;
+            node.add(snowDrift);
+
+            for (const [cx, cz, h, rad, tiltX, tiltZ] of [
+              [0, 0, 2.3, 0.32, 0.06, -0.05],
+              [0.36, 0.18, 1.55, 0.22, 0.28, -0.22],
+              [-0.34, 0.2, 1.4, 0.2, -0.24, 0.26],
+              [0.12, -0.35, 1.15, 0.18, -0.32, -0.15],
+            ] as const) {
+              const shard = new THREE.Mesh(new THREE.ConeGeometry(rad, h, 6), crystalMat);
+              shard.position.set(cx, h * 0.45, cz);
+              shard.rotation.set(tiltX, 0, tiltZ);
+              node.add(shard);
+            }
+          } else if (i % 3 === 1) {
+            // Tall Multi-tiered Snow-covered Pine Tree
+            for (let t = 0; t < 4; t++) {
+              const tierPine = new THREE.Mesh(
+                new THREE.ConeGeometry(1.35 - t * 0.26, 1.35 - t * 0.15, 8),
+                t % 2 === 0 ? snowMat : pineDarkMat,
+              );
+              tierPine.position.y = 0.9 + t * 0.72;
+              tierPine.castShadow = true;
+              node.add(tierPine);
+            }
+          } else {
+            // Cute Vietnamese Snowman wearing Nón Lá & Red Scarf (Người tuyết đội nón lá!)
+            const bottomBall = new THREE.Mesh(new THREE.SphereGeometry(0.52, 14, 12), snowMat);
+            bottomBall.scale.set(1.05, 0.92, 1.05);
+            bottomBall.position.y = 0.45;
+            node.add(bottomBall);
+
+            const topBall = new THREE.Mesh(new THREE.SphereGeometry(0.36, 14, 12), snowMat);
+            topBall.position.y = 1.12;
+            node.add(topBall);
+
+            const scarf = new THREE.Mesh(new THREE.TorusGeometry(0.32, 0.065, 8, 18), scarfRedMat);
+            scarf.rotation.x = Math.PI / 2;
+            scarf.position.y = 0.85;
+            node.add(scarf);
+
+            const hat = new THREE.Mesh(new THREE.ConeGeometry(0.56, 0.32, 18), hatStrawMat);
+            hat.position.y = 1.48;
+            node.add(hat);
+          }
+
+          decor.add(node);
+        }
+      }
+    } else {
+      // --- CHỦ ĐỀ 4: ĐỀN ĐỎ CHẠNG VẠNG (Cổng Torii/Tam Quan sơn son, Cây hoa anh đào/đào đỏ, Trụ đèn lễ hội) ---
+      const crimsonWoodMat = new THREE.MeshStandardMaterial({ color: 0xb81d2a, roughness: 0.55 });
+      const darkTileMat = new THREE.MeshStandardMaterial({ color: 0x21131a, roughness: 0.62 });
+      const goldTrimMat = new THREE.MeshStandardMaterial({
+        color: 0xf2c14e,
+        metalness: 0.5,
+        roughness: 0.3,
+      });
+      const trunkMat = new THREE.MeshStandardMaterial({ color: 0x3b1f26, roughness: 0.82 });
+      const blossomMat = new THREE.MeshStandardMaterial({
+        color: 0xff7a9c,
+        emissive: 0xc92a52,
+        emissiveIntensity: 0.55,
+        roughness: 0.5,
+      });
+      const redLanternMat = new THREE.MeshStandardMaterial({
+        color: 0xff5e4d,
+        emissive: 0xff331f,
+        emissiveIntensity: 1.65,
+        roughness: 0.25,
+      });
+
+      for (const isl of islands) {
+        const spotCount = night === 2 ? 8 : 14;
+        for (let i = 0; i < spotCount; i++) {
+          const a = (i / spotCount) * Math.PI * 2 + 0.31;
+          const r = (i % 3 === 0 ? 0.42 : i % 3 === 1 ? 0.68 : 0.82) * isl.maxR;
+          const x = isl.cx + Math.cos(a) * r;
+          const z = isl.cz + Math.sin(a) * r;
+          if (!isSafeSpot(x, z)) continue;
+
+          const item = new THREE.Group();
+          item.position.set(x, 0, z);
+          item.rotation.y = -a + Math.PI / 2;
+
+          if (i % 3 === 0) {
+            // Traditional Crimson Shrine Gate (Cổng Tam Quan / Torii sơn đỏ thếp vàng + đèn lồng treo)
+            for (const side of [-1, 1]) {
+              const base = new THREE.Mesh(new THREE.CylinderGeometry(0.24, 0.28, 0.4, 10), darkTileMat);
+              base.position.set(side * 1.15, 0.2, 0);
+              item.add(base);
+
+              const col = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.21, 3.2, 12), crimsonWoodMat);
+              col.position.set(side * 1.15, 1.8, 0);
+              col.castShadow = true;
+              item.add(col);
+
+              const goldRing = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.2, 0.18, 12), goldTrimMat);
+              goldRing.position.set(side * 1.15, 3.2, 0);
+              item.add(goldRing);
+            }
+
+            // Lower tie beam (Nuki) & Upper curved lintel (Kasagi)
+            const lowerBeam = new THREE.Mesh(new THREE.BoxGeometry(2.9, 0.18, 0.22), crimsonWoodMat);
+            lowerBeam.position.y = 2.75;
+            item.add(lowerBeam);
+
+            const upperBeam = new THREE.Mesh(new THREE.BoxGeometry(3.4, 0.22, 0.36), crimsonWoodMat);
+            upperBeam.position.y = 3.38;
+            item.add(upperBeam);
+
+            const roofCap = new THREE.Mesh(new THREE.BoxGeometry(3.65, 0.16, 0.48), darkTileMat);
+            roofCap.position.y = 3.55;
+            item.add(roofCap);
+
+            // Center golden plaque & two hanging glowing red festival lanterns
+            const plaque = new THREE.Mesh(new THREE.BoxGeometry(0.38, 0.52, 0.26), goldTrimMat);
+            plaque.position.y = 3.06;
+            item.add(plaque);
+
+            for (const side of [-1, 1]) {
+              const lantern = new THREE.Mesh(new THREE.SphereGeometry(0.23, 12, 10), redLanternMat);
+              lantern.scale.set(0.9, 1.25, 0.9);
+              lantern.position.set(side * 0.65, 2.38, 0);
+              item.add(lantern);
+            }
+          } else if (i % 3 === 1) {
+            // Twilight Cherry / Peach Blossom Tree (Cây đào đỏ nở rộ)
+            const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.35, 2.1, 8), trunkMat);
+            trunk.position.y = 1.05;
+            trunk.castShadow = true;
+            item.add(trunk);
+
+            for (const [ox, oy, oz, rad] of [
+              [0, 2.45, 0, 1.25],
+              [0.62, 2.18, 0.28, 0.88],
+              [-0.58, 2.22, -0.25, 0.85],
+            ] as const) {
+              const crown = new THREE.Mesh(new THREE.DodecahedronGeometry(rad, 1), blossomMat);
+              crown.scale.set(1.15, 0.72, 1.15);
+              crown.position.set(ox, oy, oz);
+              crown.castShadow = true;
+              item.add(crown);
+            }
+          } else {
+            // Tall Festival Lantern Stand (Trụ treo cặp đèn lồng lễ hội đỏ vàng)
+            const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.14, 2.8, 8), crimsonWoodMat);
+            pole.position.y = 1.4;
+            item.add(pole);
+
+            const arm = new THREE.Mesh(new THREE.BoxGeometry(1.1, 0.12, 0.12), darkTileMat);
+            arm.position.y = 2.68;
+            item.add(arm);
+
+            for (const side of [-1, 1]) {
+              const globe = new THREE.Mesh(new THREE.SphereGeometry(0.2, 10, 8), redLanternMat);
+              globe.scale.set(0.88, 1.28, 0.88);
+              globe.position.set(side * 0.42, 2.32, 0);
+              item.add(globe);
+            }
+          }
+
+          decor.add(item);
+        }
+      }
+    }
+
+    return decor;
   }
 
   private buildCloudSea(night: NightNumber, cfg: MapThemeConfig): THREE.Group {
@@ -609,6 +1321,141 @@ export class GameRenderer {
     return geo;
   }
 
+  /**
+   * Generates a procedural pearl-white silk texture with golden lotus blossoms,
+   * stems, side motifs, and traditional Ao Dai diagonal collar piping (matching reference image).
+   */
+  private createWhiteAoDaiLotusTexture(): THREE.CanvasTexture | null {
+    if (typeof document === 'undefined') return null;
+    const canvas = document.createElement('canvas');
+    canvas.width = 512;
+    canvas.height = 1024;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return null;
+
+    // Warm pearl-white silk base
+    ctx.fillStyle = '#FAF7F0';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    // Helper to draw a multi-petal golden lotus blossom at (cx, cy) with radius r
+    const drawGoldenLotus = (cx: number, cy: number, r: number, withLeaf = false): void => {
+      ctx.save();
+      ctx.translate(cx, cy);
+
+      // Soft gold glow / shadow under petals
+      ctx.fillStyle = '#D6A138';
+      ctx.strokeStyle = '#B88220';
+      ctx.lineWidth = Math.max(1.5, r * 0.05);
+
+      // Outer & inner lotus petals (fan of pointed oval petals)
+      const angles = [-1.15, -0.78, -0.42, 0.42, 0.78, 1.15, 0];
+      for (const a of angles) {
+        ctx.save();
+        ctx.rotate(a);
+        const len = a === 0 ? r * 1.05 : r * (1.0 - Math.abs(a) * 0.16);
+        const wid = r * 0.27;
+        ctx.beginPath();
+        ctx.moveTo(0, 0);
+        ctx.bezierCurveTo(-wid, -len * 0.35, -wid * 0.85, -len * 0.8, 0, -len);
+        ctx.bezierCurveTo(wid * 0.85, -len * 0.8, wid, -len * 0.35, 0, 0);
+        ctx.closePath();
+        ctx.fillStyle = Math.abs(a) < 0.5 ? '#ECC05B' : '#D9A73E';
+        ctx.fill();
+        ctx.stroke();
+        ctx.restore();
+      }
+
+      // Base small horizontal petals
+      for (const side of [-1, 1]) {
+        ctx.beginPath();
+        ctx.ellipse(side * r * 0.45, r * 0.06, r * 0.36, r * 0.14, side * 0.2, 0, Math.PI * 2);
+        ctx.fillStyle = '#D29E36';
+        ctx.fill();
+        ctx.stroke();
+      }
+
+      if (withLeaf) {
+        // Lotus pad & curved stem beneath blossom
+        ctx.beginPath();
+        ctx.ellipse(r * 0.15, r * 0.46, r * 0.55, r * 0.16, -0.08, 0, Math.PI * 2);
+        ctx.fillStyle = '#DFB24C';
+        ctx.fill();
+        ctx.stroke();
+      }
+
+      ctx.restore();
+    };
+
+    // Helper for ornate golden cloud/floral scroll on side edges
+    const drawSideScroll = (cx: number, cy: number, scaleX: number, r: number): void => {
+      ctx.save();
+      ctx.translate(cx, cy);
+      ctx.scale(scaleX, 1);
+      ctx.strokeStyle = '#DFB14B';
+      ctx.lineWidth = 7;
+      ctx.lineCap = 'round';
+      for (let i = 0; i < 3; i++) {
+        ctx.beginPath();
+        ctx.arc(0, i * r * 0.45, r * (0.55 - i * 0.1), -Math.PI * 0.4, Math.PI * 0.75);
+        ctx.stroke();
+      }
+      ctx.restore();
+    };
+
+    // Note: In front-facing camera (+Z looking toward origin):
+    // u = 0.5 (x = 256) is front center (+Z);
+    // u > 0.5 (x > 256, +X) is viewer's LEFT (lantern-arm side);
+    // u < 0.5 (x < 256, -X) is viewer's RIGHT (free-arm side).
+
+    // 1. Traditional diagonal Ao Dai seam piping (from center collar curving toward lantern-arm shoulder on viewer's left)
+    ctx.strokeStyle = '#E5BA54';
+    ctx.lineWidth = 12;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(256, 34);
+    ctx.quadraticCurveTo(335, 58, 418, 145);
+    ctx.stroke();
+
+    // 2. Upper chest lotus blossom (viewer's right chest, x < 256) + lotus leaf pad beneath
+    drawGoldenLotus(190, 210, 58, true);
+
+    // 3. Mid-waist lotus blossom + curving stem
+    ctx.strokeStyle = '#D9A73E';
+    ctx.lineWidth = 6;
+    ctx.beginPath();
+    ctx.moveTo(264, 365);
+    ctx.quadraticCurveTo(238, 445, 275, 525);
+    ctx.stroke();
+    drawGoldenLotus(264, 360, 66, false);
+
+    // 4. Side waist/hip golden floral scrolls
+    drawSideScroll(378, 515, -1, 58);
+    drawSideScroll(134, 625, 1, 58);
+
+    // 5. Twin large lotus blossoms along the lower hem of the front flap with graceful arched stems
+    for (const lx of [185, 328]) {
+      ctx.strokeStyle = '#DFB14B';
+      ctx.lineWidth = 5.5;
+      ctx.beginPath();
+      ctx.arc(lx, 835, 78, Math.PI * 1.1, Math.PI * 1.9);
+      ctx.stroke();
+      drawGoldenLotus(lx, 885, 68, false);
+    }
+
+    // Subtle golden bottom hem border line
+    ctx.strokeStyle = '#E5BA54';
+    ctx.lineWidth = 8;
+    ctx.beginPath();
+    ctx.moveTo(60, 965);
+    ctx.lineTo(452, 965);
+    ctx.stroke();
+
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    tex.needsUpdate = true;
+    return tex;
+  }
+
   private buildPlayerBody(cfg: CharacterConfig): {
     body: THREE.Group;
     leftArmPivot: THREE.Group;
@@ -628,7 +1475,6 @@ export class GameRenderer {
       side: THREE.DoubleSide,
     });
     const hairMat = new THREE.MeshStandardMaterial({ color: cfg.hairColor, roughness: 0.72 });
-    const woodMat = new THREE.MeshStandardMaterial({ color: 0x6b4a2f, roughness: 0.8 });
     const goldMat = new THREE.MeshStandardMaterial({
       color: 0xf2c14e,
       metalness: 0.5,
@@ -645,118 +1491,120 @@ export class GameRenderer {
     let cuffMat: THREE.Material = scarfMat;
 
     if (cfg.id === 'may') {
-      // --- MÂY: Áo Dài Việt Nam màu trắng (Đường cong eo mềm mại & 2 tà áo uốn lượn) ---
+      // --- MÂY: Áo Dài Trắng Việt Nam thêu Hoa Sen Vàng (chuẩn theo ảnh mẫu) ---
+      const lotusTex = this.createWhiteAoDaiLotusTexture();
       const aoDaiWhiteMat = new THREE.MeshStandardMaterial({
-        color: 0xf7f4eb,
-        roughness: 0.48,
+        color: 0xfaf7f0,
+        roughness: 0.46,
+        side: THREE.DoubleSide,
+      });
+      const aoDaiFrontMat = new THREE.MeshStandardMaterial({
+        color: 0xffffff,
+        map: lotusTex,
+        roughness: 0.44,
         side: THREE.DoubleSide,
       });
       const silkPantsMat = new THREE.MeshStandardMaterial({
-        color: 0xe9e3d5,
-        roughness: 0.58,
+        color: 0xeeeAE0,
+        roughness: 0.52,
         side: THREE.DoubleSide,
       });
       sleeveMat = aoDaiWhiteMat;
       cuffMat = aoDaiWhiteMat;
 
-      // Softly flared silk trouser legs (quần lụa ống rộng mềm mại) + small shoes
+      // Wide-leg white/cream silk trousers (quần lụa ống rộng lộ rõ dưới tà áo & hai bên xẻ tà) + dark shoes
       const pantGeo = this.createSmoothLathe(
         [
-          [0.06, 0.03],
-          [0.145, 0.07],
-          [0.13, 0.24],
-          [0.105, 0.46],
-          [0.095, 0.68],
-        ],
-        20,
-      );
-      const shoeMat = new THREE.MeshStandardMaterial({ color: 0x5c3a28, roughness: 0.7 });
-      for (const side of [-1, 1]) {
-        const leg = new THREE.Mesh(pantGeo, silkPantsMat);
-        leg.position.set(side * 0.115, 0, 0);
-        leg.castShadow = true;
-        body.add(leg);
-
-        const shoe = new THREE.Mesh(new THREE.CapsuleGeometry(0.052, 0.07, 6, 10), shoeMat);
-        shoe.rotation.x = Math.PI / 2;
-        shoe.position.set(side * 0.115, 0.04, 0.04);
-        body.add(shoe);
-      }
-
-      // Hourglass fitted Ao Dai bodice curving smoothly from hips -> slender waist -> bust -> shoulders
-      const bodiceGeo = this.createSmoothLathe(
-        [
-          [0.185, 0.65],
-          [0.142, 0.78],
-          [0.198, 0.95],
-          [0.172, 1.07],
-          [0.105, 1.13],
-        ],
-        28,
-      );
-      const bodice = new THREE.Mesh(bodiceGeo, aoDaiWhiteMat);
-      bodice.scale.set(1.04, 1, 0.88);
-      bodice.castShadow = true;
-      body.add(bodice);
-
-      // Soft rounded Mandarin collar (cổ tàu ôm cổ)
-      const collarGeo = this.createSmoothLathe(
-        [
-          [0.11, 1.11],
-          [0.102, 1.155],
-          [0.106, 1.19],
+          [0.118, 0.045],
+          [0.132, 0.08],
+          [0.128, 0.25],
+          [0.115, 0.48],
+          [0.102, 0.72],
         ],
         22,
       );
+      const shoeMat = new THREE.MeshStandardMaterial({ color: 0x3b1515, roughness: 0.55 });
+      for (const side of [-1, 1]) {
+        const leg = new THREE.Mesh(pantGeo, silkPantsMat);
+        leg.position.set(side * 0.11, 0, 0);
+        leg.castShadow = true;
+        body.add(leg);
+
+        const shoe = new THREE.Mesh(new THREE.SphereGeometry(0.068, 12, 10), shoeMat);
+        shoe.scale.set(0.95, 0.65, 1.35);
+        shoe.position.set(side * 0.11, 0.032, 0.035);
+        body.add(shoe);
+      }
+
+      // Upper torso inner core (closes the sides/back from waist y=0.68 to neck y=1.12)
+      const innerTorsoGeo = this.createSmoothLathe(
+        [
+          [0.152, 0.68],
+          [0.144, 0.79],
+          [0.186, 0.95],
+          [0.166, 1.06],
+          [0.102, 1.12],
+        ],
+        28,
+      );
+      const innerTorso = new THREE.Mesh(innerTorsoGeo, aoDaiWhiteMat);
+      innerTorso.scale.set(1.03, 1, 0.87);
+      innerTorso.castShadow = true;
+      body.add(innerTorso);
+
+      // Continuous Front Áo Dài Panel (from bottom hem y=0.14 up to collar y=1.12, centered on +Z at phi=0)
+      // Side slits sit on left/right hips (phi = -PI/2 and +PI/2) so wide silk trousers show on both sides!
+      const frontPanelGeo = this.createSmoothLathe(
+        [
+          [0.235, 0.14],
+          [0.218, 0.3],
+          [0.192, 0.5],
+          [0.162, 0.67],
+          [0.147, 0.79],
+          [0.191, 0.95],
+          [0.17, 1.06],
+          [0.105, 1.12],
+        ],
+        28,
+        -Math.PI / 2 + 0.18,
+        Math.PI - 0.36,
+      );
+      const frontPanel = new THREE.Mesh(frontPanelGeo, aoDaiFrontMat);
+      frontPanel.scale.set(1.04, 1, 0.89);
+      frontPanel.castShadow = true;
+      body.add(frontPanel);
+
+      // Flowing Back Áo Dài Panel (centered on -Z at phi=PI, from bottom hem y=0.14 to waist y=0.78)
+      const backPanelGeo = this.createSmoothLathe(
+        [
+          [0.24, 0.14],
+          [0.22, 0.3],
+          [0.194, 0.5],
+          [0.164, 0.67],
+          [0.147, 0.78],
+        ],
+        24,
+        Math.PI / 2 + 0.18,
+        Math.PI - 0.36,
+      );
+      const backPanel = new THREE.Mesh(backPanelGeo, aoDaiWhiteMat);
+      backPanel.scale.set(1.04, 1, 0.9);
+      backPanel.castShadow = true;
+      body.add(backPanel);
+
+      // Standing Mandarin collar (cổ tàu có khe chữ V nhỏ phía trước cổ tại phi=0)
+      const collarGeo = this.createSmoothLathe(
+        [
+          [0.106, 1.105],
+          [0.1, 1.15],
+          [0.102, 1.185],
+        ],
+        24,
+        0.22,
+        Math.PI * 2 - 0.44,
+      );
       const collar = new THREE.Mesh(collarGeo, aoDaiWhiteMat);
       body.add(collar);
-
-      // Soft red silk sash around waist & collar accent (#C8102E)
-      const waistSash = new THREE.Mesh(new THREE.TorusGeometry(0.148, 0.022, 10, 24), scarfMat);
-      waistSash.rotation.x = Math.PI / 2;
-      waistSash.scale.set(1.05, 0.88, 1);
-      waistSash.position.y = 0.77;
-      body.add(waistSash);
-
-      const necklace = new THREE.Mesh(new THREE.TorusGeometry(0.125, 0.014, 8, 20), goldMat);
-      necklace.rotation.x = Math.PI / 2 + 0.18;
-      necklace.position.set(0, 1.09, 0.02);
-      body.add(necklace);
-
-      // Flowing curved front & back Ao Dai panels (tà áo dài trước & sau uốn cong tự nhiên, xẻ tà 2 bên)
-      const frontFlapGeo = this.createSmoothLathe(
-        [
-          [0.24, 0.07],
-          [0.215, 0.24],
-          [0.18, 0.46],
-          [0.15, 0.66],
-          [0.142, 0.77],
-        ],
-        20,
-        0.22,
-        Math.PI - 0.44,
-      );
-      const frontFlap = new THREE.Mesh(frontFlapGeo, aoDaiWhiteMat);
-      frontFlap.scale.set(1.04, 1, 0.92);
-      frontFlap.castShadow = true;
-      body.add(frontFlap);
-
-      const backFlapGeo = this.createSmoothLathe(
-        [
-          [0.255, 0.06],
-          [0.225, 0.24],
-          [0.185, 0.46],
-          [0.152, 0.66],
-          [0.142, 0.77],
-        ],
-        20,
-        Math.PI + 0.22,
-        Math.PI - 0.44,
-      );
-      const backFlap = new THREE.Mesh(backFlapGeo, aoDaiWhiteMat);
-      backFlap.scale.set(1.04, 1, 0.95);
-      backFlap.castShadow = true;
-      body.add(backFlap);
     } else if (cfg.id === 'linh') {
       // --- LINH: Hanbok Hàn Quốc (Váy Chima bầu phồng mềm mại + Áo Jeogori bo tròn) ---
       const jeogoriMat = new THREE.MeshStandardMaterial({
@@ -1058,230 +1906,208 @@ export class GameRenderer {
       body.add(cape);
     }
 
-    // Head (softly contoured oval face)
+    // Head (chibi doll oval face matching reference image)
     const headGroup = new THREE.Group();
-    headGroup.position.set(0, 1.34, 0);
+    headGroup.position.set(0, 1.35, 0);
     body.add(headGroup);
 
-    const head = new THREE.Mesh(new THREE.SphereGeometry(0.255, 22, 18), skinMat);
-    head.scale.set(0.96, 1.03, 0.95);
+    const head = new THREE.Mesh(new THREE.SphereGeometry(0.26, 24, 18), skinMat);
+    head.scale.set(1.02, 0.98, 0.96);
     head.castShadow = true;
     headGroup.add(head);
 
-    // --- FACE: Eyes, Highlights, Eyebrows, Rosy Cheeks, Nose, Smile ---
-    const eyeMat = new THREE.MeshStandardMaterial({ color: 0x1b1418, roughness: 0.12 });
-    const eyeShineMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
-    const eyeGeo = new THREE.SphereGeometry(0.036, 10, 10);
-    const shineGeo = new THREE.SphereGeometry(0.013, 6, 6);
+    // --- FACE: Cute Round Button Eyes, Rosy Cheeks, Tiny Button Nose, Red U-Smile ---
+    const eyeMat = new THREE.MeshStandardMaterial({ color: 0x120c0e, roughness: 0.15 });
+    const eyeGeo = new THREE.SphereGeometry(0.038, 12, 12);
 
     for (const side of [-1, 1]) {
       const eye = new THREE.Mesh(eyeGeo, eyeMat);
-      eye.scale.set(1.0, 1.18, 0.62);
-      eye.position.set(side * 0.092, 0.025, 0.224);
+      eye.scale.set(1.0, 1.05, 0.55);
+      eye.position.set(side * 0.095, 0.018, 0.232);
       headGroup.add(eye);
 
-      const shine = new THREE.Mesh(shineGeo, eyeShineMat);
-      shine.position.set(side * 0.081, 0.042, 0.246);
-      headGroup.add(shine);
-
-      // Curved soft eyebrow
-      const brow = new THREE.Mesh(new THREE.CapsuleGeometry(0.008, 0.052, 4, 8), hairMat);
-      brow.position.set(side * 0.092, 0.086, 0.226);
-      brow.rotation.z = Math.PI / 2 + side * -0.14;
-      headGroup.add(brow);
-
-      // Rosy cheek
+      // Cute horizontal oval pink blush right below outer eye
       const cheek = new THREE.Mesh(
-        new THREE.SphereGeometry(0.034, 8, 8),
-        new THREE.MeshBasicMaterial({ color: 0xf4979c, transparent: true, opacity: 0.55 }),
+        new THREE.SphereGeometry(0.038, 10, 10),
+        new THREE.MeshBasicMaterial({ color: 0xf095a2, transparent: true, opacity: 0.68 }),
       );
-      cheek.scale.set(1.25, 0.68, 0.35);
-      cheek.position.set(side * 0.142, -0.024, 0.206);
+      cheek.scale.set(1.35, 0.65, 0.35);
+      cheek.position.set(side * 0.145, -0.036, 0.214);
       headGroup.add(cheek);
     }
 
-    // Soft small nose
+    // Small cute button nose between eyes
     const nose = new THREE.Mesh(
-      new THREE.SphereGeometry(0.022, 8, 8),
-      new THREE.MeshStandardMaterial({ color: 0xebbfa0, roughness: 0.68 }),
+      new THREE.SphereGeometry(0.02, 8, 8),
+      new THREE.MeshStandardMaterial({ color: 0xd9ad8f, roughness: 0.65 }),
     );
-    nose.scale.set(0.9, 0.85, 1.1);
-    nose.position.set(0, -0.016, 0.252);
+    nose.scale.set(0.88, 0.95, 1.1);
+    nose.position.set(0, -0.012, 0.255);
     headGroup.add(nose);
 
-    // Gentle smiling mouth
+    // Happy U-shaped red smile
     const mouth = new THREE.Mesh(
-      new THREE.TorusGeometry(0.044, 0.011, 8, 16, Math.PI),
-      new THREE.MeshStandardMaterial({ color: 0xc44d58, roughness: 0.45 }),
+      new THREE.TorusGeometry(0.042, 0.012, 8, 18, Math.PI),
+      new THREE.MeshStandardMaterial({ color: 0xb82e35, roughness: 0.42 }),
     );
     mouth.rotation.z = Math.PI;
-    mouth.position.set(0, -0.068, 0.222);
+    mouth.position.set(0, -0.064, 0.228);
     headGroup.add(mouth);
 
-    // --- HAIR: Soft Rounded Crown, Swept Bangs, Side Locks & Braided/Flowing Back Hair ---
-    const hairCap = new THREE.Mesh(new THREE.SphereGeometry(0.27, 20, 16), hairMat);
-    hairCap.scale.set(0.99, 1.04, 1.0);
-    hairCap.position.set(0, 0.04, -0.032);
+    // --- HAIR: Center-Parted Swept Forehead Hair, Thick Rounded Side Locks & Low Back Bun ---
+    const hairCap = new THREE.Mesh(new THREE.SphereGeometry(0.272, 20, 16), hairMat);
+    hairCap.scale.set(1.03, 1.0, 1.0);
+    hairCap.position.set(0, 0.035, -0.028);
     hairCap.castShadow = true;
     headGroup.add(hairCap);
 
-    // Soft rounded bangs (using CapsuleGeometry instead of sharp cones)
-    const bangCenter = new THREE.Mesh(new THREE.CapsuleGeometry(0.048, 0.08, 6, 10), hairMat);
-    bangCenter.scale.set(1.15, 1, 0.55);
-    bangCenter.position.set(0, 0.155, 0.195);
-    bangCenter.rotation.x = 0.3;
-    headGroup.add(bangCenter);
-
     for (const side of [-1, 1]) {
-      const bangSide = new THREE.Mesh(new THREE.CapsuleGeometry(0.052, 0.11, 6, 10), hairMat);
-      bangSide.scale.set(1.1, 1, 0.55);
-      bangSide.position.set(side * 0.115, 0.135, 0.178);
-      bangSide.rotation.z = side * 0.48;
-      bangSide.rotation.x = 0.24;
-      headGroup.add(bangSide);
+      // Smooth center-parted hair sweep across forehead under hat brim
+      const bangSweep = new THREE.Mesh(new THREE.CapsuleGeometry(0.056, 0.16, 8, 12), hairMat);
+      bangSweep.scale.set(1.0, 1.0, 0.58);
+      bangSweep.position.set(side * 0.11, 0.125, 0.185);
+      bangSweep.rotation.z = side * 1.18;
+      bangSweep.rotation.y = side * -0.28;
+      headGroup.add(bangSweep);
 
-      // Soft tapered side hair locks framing cheeks
-      const sideLock = new THREE.Mesh(new THREE.CapsuleGeometry(0.048, 0.19, 6, 10), hairMat);
-      sideLock.scale.set(0.85, 1, 0.75);
-      sideLock.position.set(side * 0.228, -0.065, 0.045);
-      sideLock.rotation.z = side * 0.1;
+      // Thick cute rounded side hair locks hanging beside cheeks (matching reference image)
+      const sideLock = new THREE.Mesh(new THREE.CapsuleGeometry(0.056, 0.17, 8, 12), hairMat);
+      sideLock.scale.set(0.92, 1.0, 0.85);
+      sideLock.position.set(side * 0.235, -0.055, 0.065);
+      sideLock.rotation.z = side * 0.06;
       headGroup.add(sideLock);
     }
 
-    // Flowing organic back hair / braid (chain of soft spheres instead of a cone)
-    for (let i = 0; i < 4; i++) {
-      const r = 0.145 - i * 0.022;
+    // Neat low bun / ponytail at back of neck
+    for (let i = 0; i < 3; i++) {
+      const r = 0.125 - i * 0.02;
       const puff = new THREE.Mesh(new THREE.SphereGeometry(r, 12, 10), hairMat);
-      puff.scale.set(1.15, 0.95, 0.85);
-      puff.position.set(0, -0.04 - i * 0.115, -0.22 - i * 0.025);
+      puff.position.set(0, -0.08 - i * 0.1, -0.21 - i * 0.02);
       headGroup.add(puff);
     }
 
-    if (cfg.hatStyle === 'non_la') {
-      const ribbon = new THREE.Mesh(new THREE.TorusGeometry(0.055, 0.018, 8, 14), scarfMat);
-      ribbon.rotation.x = Math.PI / 2;
-      ribbon.position.set(0, -0.26, -0.27);
-      headGroup.add(ribbon);
-    }
-
-    // --- LEFT ARM (Soft Rounded Shoulder & Curved Sleeve) ---
+    // --- LEFT ARM (Rounded Shoulder Puff, Tapered Sleeve & Wrist Cuff) ---
     const leftArmPivot = new THREE.Group();
-    leftArmPivot.position.set(-0.24, 1.03, 0.0);
+    leftArmPivot.position.set(-0.23, 1.01, 0.0);
     body.add(leftArmPivot);
 
-    const leftShoulder = new THREE.Mesh(new THREE.SphereGeometry(0.088, 12, 10), sleeveMat);
-    leftShoulder.position.set(-0.03, -0.02, 0);
+    const leftShoulder = new THREE.Mesh(new THREE.SphereGeometry(0.086, 12, 10), sleeveMat);
+    leftShoulder.position.set(-0.02, -0.01, 0);
     leftArmPivot.add(leftShoulder);
 
-    const leftSleeve = new THREE.Mesh(new THREE.CapsuleGeometry(0.072, 0.25, 8, 14), sleeveMat);
-    leftSleeve.position.set(-0.07, -0.18, 0.02);
-    leftSleeve.rotation.z = -0.18;
+    const leftSleeve = new THREE.Mesh(new THREE.CapsuleGeometry(0.068, 0.23, 8, 14), sleeveMat);
+    leftSleeve.position.set(-0.065, -0.17, 0.015);
+    leftSleeve.rotation.z = -0.16;
     leftSleeve.castShadow = true;
     leftArmPivot.add(leftSleeve);
 
-    const leftCuff = new THREE.Mesh(new THREE.TorusGeometry(0.068, 0.016, 8, 16), cuffMat);
+    const leftCuff = new THREE.Mesh(new THREE.TorusGeometry(0.066, 0.016, 8, 16), cuffMat);
     leftCuff.rotation.x = Math.PI / 2;
-    leftCuff.position.set(-0.095, -0.32, 0.025);
+    leftCuff.position.set(-0.09, -0.3, 0.02);
     leftArmPivot.add(leftCuff);
 
-    const leftHand = new THREE.Mesh(new THREE.SphereGeometry(0.062, 10, 10), skinMat);
-    leftHand.position.set(-0.105, -0.39, 0.035);
+    const leftHand = new THREE.Mesh(new THREE.SphereGeometry(0.058, 10, 10), skinMat);
+    leftHand.position.set(-0.098, -0.365, 0.025);
     leftArmPivot.add(leftHand);
 
-    // --- RIGHT ARM HOLDING GLOWING HAND-LANTERN ---
+    // --- RIGHT ARM HOLDING COMPACT DARK-WOOD STICK & ROUND GLOWING LANTERN ---
+    const darkWoodMat = new THREE.MeshStandardMaterial({ color: 0x21140f, roughness: 0.65 });
     const smallLanternMat = new THREE.MeshStandardMaterial({
       color: cfg.lanternColor,
       emissive: cfg.lanternEmissive,
-      emissiveIntensity: 2.3,
-      roughness: 0.2,
+      emissiveIntensity: 2.2,
+      roughness: 0.22,
     });
 
     const rightArmPivot = new THREE.Group();
-    rightArmPivot.position.set(0.24, 1.03, 0.02);
+    rightArmPivot.position.set(0.23, 1.01, 0.02);
     body.add(rightArmPivot);
 
-    const rightShoulder = new THREE.Mesh(new THREE.SphereGeometry(0.088, 12, 10), sleeveMat);
-    rightShoulder.position.set(0.03, -0.02, 0);
+    const rightShoulder = new THREE.Mesh(new THREE.SphereGeometry(0.086, 12, 10), sleeveMat);
+    rightShoulder.position.set(0.02, -0.01, 0);
     rightArmPivot.add(rightShoulder);
 
-    const rightSleeve = new THREE.Mesh(new THREE.CapsuleGeometry(0.072, 0.24, 8, 14), sleeveMat);
-    rightSleeve.position.set(0.06, -0.07, 0.16);
-    rightSleeve.rotation.x = Math.PI / 2.4;
-    rightSleeve.rotation.z = 0.14;
+    const rightSleeve = new THREE.Mesh(new THREE.CapsuleGeometry(0.068, 0.22, 8, 14), sleeveMat);
+    rightSleeve.position.set(0.075, -0.1, 0.12);
+    rightSleeve.rotation.x = Math.PI / 3.1;
+    rightSleeve.rotation.z = 0.25;
     rightSleeve.castShadow = true;
     rightArmPivot.add(rightSleeve);
 
-    const rightCuff = new THREE.Mesh(new THREE.TorusGeometry(0.068, 0.016, 8, 16), cuffMat);
-    rightCuff.position.set(0.08, -0.09, 0.29);
+    const rightCuff = new THREE.Mesh(new THREE.TorusGeometry(0.066, 0.016, 8, 16), cuffMat);
+    rightCuff.rotation.x = Math.PI / 2 - Math.PI / 3.1;
+    rightCuff.position.set(0.11, -0.17, 0.22);
     rightArmPivot.add(rightCuff);
 
-    const rightHand = new THREE.Mesh(new THREE.SphereGeometry(0.064, 10, 10), skinMat);
-    rightHand.position.set(0.085, -0.09, 0.36);
+    const rightHand = new THREE.Mesh(new THREE.SphereGeometry(0.058, 10, 10), skinMat);
+    rightHand.position.set(0.125, -0.2, 0.27);
     rightArmPivot.add(rightHand);
 
-    // Curved wooden lantern pole held in hand
-    const handleStick = new THREE.Mesh(new THREE.CapsuleGeometry(0.018, 0.56, 6, 10), woodMat);
-    handleStick.rotation.x = Math.PI / 2.25;
-    handleStick.position.set(0.085, -0.02, 0.56);
+    // Compact dark wooden stick held forward in right hand (matching reference image)
+    const handleStick = new THREE.Mesh(new THREE.CapsuleGeometry(0.016, 0.22, 6, 10), darkWoodMat);
+    handleStick.rotation.x = Math.PI / 2.15;
+    handleStick.rotation.z = -0.12;
+    handleStick.position.set(0.14, -0.19, 0.36);
     rightArmPivot.add(handleStick);
 
-    // Hanging lantern assembly pivoting at tip of the held stick
+    // Hanging lantern assembly pivoting at tip of the compact stick
     const handLanternPivot = new THREE.Group();
-    handLanternPivot.position.set(0.085, 0.03, 0.84);
+    handLanternPivot.position.set(0.155, -0.18, 0.46);
     rightArmPivot.add(handLanternPivot);
 
-    const hangCord = new THREE.Mesh(new THREE.CylinderGeometry(0.01, 0.01, 0.16, 6), woodMat);
-    hangCord.position.y = -0.08;
+    const hangCord = new THREE.Mesh(new THREE.CylinderGeometry(0.011, 0.011, 0.12, 8), darkWoodMat);
+    hangCord.position.y = -0.06;
     handLanternPivot.add(hangCord);
 
-    const capTop = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.06, 0.105, 0.045, 12),
-      new THREE.MeshStandardMaterial({ color: 0x3b261d, roughness: 0.65 }),
+    const capTopRing = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.036, 0.045, 0.018, 12),
+      new THREE.MeshStandardMaterial({ color: 0xf7e7b4, emissive: 0xffc866, emissiveIntensity: 0.8 }),
     );
-    capTop.position.y = -0.17;
+    capTopRing.position.y = -0.125;
+    handLanternPivot.add(capTopRing);
+
+    const capTop = new THREE.Mesh(new THREE.CylinderGeometry(0.048, 0.115, 0.055, 16), darkWoodMat);
+    capTop.position.y = -0.155;
     handLanternPivot.add(capTop);
 
-    const lanternBody = new THREE.Mesh(new THREE.SphereGeometry(0.145, 14, 12), smallLanternMat);
-    lanternBody.scale.set(0.95, 1.18, 0.95);
-    lanternBody.position.y = -0.31;
+    const lanternBody = new THREE.Mesh(new THREE.SphereGeometry(0.15, 18, 14), smallLanternMat);
+    lanternBody.scale.set(1.0, 1.05, 1.0);
+    lanternBody.position.y = -0.285;
     handLanternPivot.add(lanternBody);
 
-    const capBottom = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.095, 0.055, 0.04, 12),
-      new THREE.MeshStandardMaterial({ color: 0x3b261d, roughness: 0.65 }),
-    );
-    capBottom.position.y = -0.46;
+    const capBottom = new THREE.Mesh(new THREE.CylinderGeometry(0.095, 0.045, 0.04, 14), darkWoodMat);
+    capBottom.position.y = -0.42;
     handLanternPivot.add(capBottom);
 
-    const tassel = new THREE.Mesh(new THREE.CapsuleGeometry(0.02, 0.1, 6, 8), scarfMat);
-    tassel.position.y = -0.55;
+    const tassel = new THREE.Mesh(new THREE.CylinderGeometry(0.018, 0.016, 0.11, 8), darkWoodMat);
+    tassel.position.y = -0.49;
     handLanternPivot.add(tassel);
 
     const hatLight = new THREE.PointLight(cfg.lightColor, 3.2, 15, 1.55);
-    hatLight.position.set(0, -0.31, 0);
+    hatLight.position.set(0, -0.285, 0);
     handLanternPivot.add(hatLight);
 
     // --- CHARACTER HATS / HEADGEAR ---
     const hatMat = new THREE.MeshStandardMaterial({
       color: cfg.hatColor,
-      roughness: 0.68,
+      roughness: 0.72,
       side: THREE.DoubleSide,
     });
 
     if (cfg.hatStyle === 'non_la') {
-      // Mây: Softly curved traditional Vietnamese nón lá
+      // Mây: Crisp conical Vietnamese nón lá matching reference image
       const nonLaGeo = this.createSmoothLathe(
         [
-          [0.01, 0.38],
-          [0.24, 0.25],
-          [0.5, 0.12],
-          [0.74, 0.0],
+          [0.008, 0.36],
+          [0.24, 0.24],
+          [0.48, 0.12],
+          [0.72, 0.0],
         ],
-        28,
+        32,
       );
       const hat = new THREE.Mesh(nonLaGeo, hatMat);
-      hat.position.set(0, 1.49, -0.03);
-      hat.rotation.x = -0.12;
+      hat.position.set(0, 1.48, -0.02);
+      hat.rotation.x = -0.08;
       hat.castShadow = true;
       body.add(hat);
     } else if (cfg.hatStyle === 'scholar') {
@@ -1750,6 +2576,18 @@ export class GameRenderer {
     this.particles.length = 0;
     for (const r of this.pulseRings) this.scene.remove(r.mesh);
     this.pulseRings.length = 0;
+    if (this.benchShadeBodies) {
+      this.scene.remove(this.benchShadeBodies);
+      this.benchShadeBodies = null;
+    }
+    if (this.benchShadeEyes) {
+      this.scene.remove(this.benchShadeEyes);
+      this.benchShadeEyes = null;
+    }
+    if (this.benchMotes) {
+      this.scene.remove(this.benchMotes);
+      this.benchMotes = null;
+    }
   }
 
   public render(
@@ -2104,9 +2942,17 @@ export class GameRenderer {
     const camDist = 11.8 * this.currentZoom;
     const camHeight = 1.35 + 5.65 * this.currentZoom;
     const lookYOffset = 1.15 + 0.25 * Math.min(1, this.currentZoom);
+    let shakeX = 0;
+    let shakeY = 0;
+    if (this.hitShakeTimer > 0 && !this.reduceMotion) {
+      this.hitShakeTimer = Math.max(0, this.hitShakeTimer - frameDt);
+      const amp = this.hitShakeTimer * 1.2;
+      shakeX = Math.sin(this.clockTime * 55) * amp;
+      shakeY = Math.cos(this.clockTime * 48) * amp;
+    }
     const desiredCamPos = new THREE.Vector3(
-      px - Math.sin(theta) * camDist,
-      Math.max(-3, py) + camHeight,
+      px - Math.sin(theta) * camDist + shakeX,
+      Math.max(-3, py) + camHeight + shakeY,
       pz - Math.cos(theta) * camDist,
     );
     const desiredLook = new THREE.Vector3(px, Math.max(-4, py) + lookYOffset, pz);

@@ -1,5 +1,28 @@
 # CHANGELOG — Đảo Đèn Lồng
 
+## [v1.0.0 · Phase 4 · Contract v1.3] — 2026-11-20 ("Bình minh: phát hành v1.0.0" — TICKET-04)
+
+### Tính năng mới & Phi chức năng (Phase 4)
+1. **Chế độ Benchmark 3D (`bench_cmd`: `node dist/bench.js`):**
+   - Mở cửa sổ `1280×720` không toàn màn hình (`--disable-gpu-vsync`), tải Đêm 1 chuẩn không skin sáng tạo, `200` Bóng Mực `wander` (`seed 42`) + `100` Đom Đóm vẽ bằng `THREE.InstancedMesh`, đèn `L1`–`L3` sáng (`fuel = 100`), camera quỹ đạo bán kính `30 m` ở `Y = 15 m` quay CCW `15 s`/vòng, khởi động `3 s` + đo `--duration` giây, tự thoát mã `0` và xuất `bench.json` đầy đủ 10 trường.
+   - Đạt **`avg_fps: 109.1`**, **`p1_low_fps: 67.2`**, **`frame_ms_p95: 14 ms`**, **`load_ms: 2002 ms`** trên Intel UHD Graphics.
+2. **Chế độ Soak Test (`soak_cmd`: `node dist/soak.js`):**
+   - Chạy headless `10` Đêm liên tiếp trong cùng tiến trình (xoay vòng Đêm `1 → 2 → 3`, Đêm `i` dùng seed `7 + i`, input ngẫu nhiên theo đúng xác suất đặc tả), xuất `soak.json`.
+   - Đạt **`crashes: 0`**, **`mem_start_mb: 38.1` → `mem_end_mb: 40.8`** (`1.07× <= 1.20×`), hoàn thành trong `0.4 s`.
+3. **Bảng xếp hạng cục bộ & CLI xuất JSON:**
+   - Lưu điểm sau màn hình Bình Minh Đêm 3 hoặc khi thua ở bất kỳ Đêm nào; kiểm tra tên `3–12` ký tự `[A-Za-z0-9_]` + hỗ trợ tiếng Việt có dấu; lưu đĩa cục bộ (`data/leaderboard.json`), giữ Top 10 sắp theo điểm giảm dần (bằng điểm ai đạt trước đứng trên).
+   - Thêm màn hình **Bảng xếp hạng** trong menu chính và lệnh `node dist/run.js --export-leaderboard out.json`.
+4. **Dễ tiếp cận (Accessibility):**
+   - Đổi phím cho đủ 9 hành động (4 hướng, nhảy, lướt, tương tác, tỏa sáng, tạm dừng) kèm cảnh báo trùng phím, nút **"Khôi phục mặc định"** và lưu `localStorage`.
+   - Phụ đề & chỉ báo hình ảnh: Bóng Mực xuất hiện (kèm mũi tên mép màn hình), gió sắp thổi, `10 s` cuối, đèn `fuel < 30`.
+   - Giảm chuyển động (tắt rung camera & chớp màn hình).
+   - Cỡ chữ UI tối thiểu `18 px` ở `1280×720` kèm tùy chọn **Chữ lớn (`×1.25`)**.
+5. **Đóng gói, Hợp đồng v1.3 & Tài liệu phát hành:**
+   - Cập nhật `game.contract.json` lên `"1.3"` (`run_cmd`, `bench_cmd`, `soak_cmd`).
+   - Thêm `Dockerfile` đa tầng gọn nhẹ, máy chủ tĩnh `dist/run.js`, `docs/screenshot.png`, `docs/RETRO.md`, và mở rộng bộ test tự động lên **19/19 PASS**.
+
+---
+
 ## [Phase 3 · Contract v1.2] — 2026-11-20 ("Đèn cạn dầu" — TICKET-03)
 
 ### Breaking Changes (Thay đổi phá vỡ tương thích so với Phase 2 / Contract v1.1)

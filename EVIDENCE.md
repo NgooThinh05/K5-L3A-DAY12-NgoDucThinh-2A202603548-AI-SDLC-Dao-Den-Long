@@ -1,6 +1,92 @@
-# EVIDENCE — Đảo Đèn Lồng (Phase 1, Phase 2 & Phase 3)
+# EVIDENCE — Đảo Đèn Lồng (Phase 1, 2, 3 & 4 · v1.0.0)
 
-Tài liệu bằng chứng kiểm chứng, quyết định thiết kế, lý do cập nhật test khi yêu cầu thay đổi, đánh giá từng phase và nhật ký sử dụng AI.
+Tài liệu bằng chứng kiểm chứng, quyết định thiết kế, kết quả đo hiệu năng/ổn định thực tế, đánh giá từng phase và nhật ký sử dụng AI.
+
+---
+
+# PHASE 4 — TICKET-04: "Bình minh: phát hành v1.0.0" (Contract v1.3)
+
+## 1. Cấu hình máy tự đo tham khảo
+- **OS:** Windows 11 (`Windows_NT 10.0.22631 x64`)
+- **CPU:** 11th Gen Intel(R) Core(TM) i5-11400H @ 2.70GHz
+- **GPU / WebGL2:** Intel(R) UHD Graphics (Direct3D11 ANGLE)
+- **RAM:** 7.8 GB · **Node.js:** `v22.19.0` · **Browser:** Google Chrome
+
+## 2. Bảng truy vết Yêu cầu Phase 4 → Kiểm chứng → Bằng chứng
+
+| Yêu cầu TICKET-04 | Cách kiểm chứng | Bằng chứng thực tế | Kết quả |
+|---|---|---|---|
+| **Benchmark 3D** (`1280×720`, 200 Shades, 100 Motes, L1–L3 lit, camera quỹ đạo `30 m / Y=15 / 15 s`, `3 s` warmup + `30 s` đo, exit `0`) | `node dist/bench.js --seed 42 --duration 30 --out bench.json` | [`bench.json`](bench.json): **`avg_fps: 109.1`** (`≥ 60`), **`p1_low_fps: 67.2`** (`≥ 30`), **`frame_ms_p95: 14`**, **`load_ms: 2002`** (`≤ 10000`), `peak_mem_mb: 846.5`, `vsync_off: true` | **ĐẠT** |
+| **Soak test** (`10` Đêm liên tiếp `1→2→3`, seed `7+i`, input ngẫu nhiên theo xác suất đặc tả) | `node dist/soak.js --seed 7 --nights 10 --out soak.json` + Test #18 | [`soak.json`](soak.json): **`nights: 10`**, **`crashes: 0`**, **`mem_start_mb: 38.1` → `mem_end_mb: 40.8`** (`1.07× ≤ 1.20×`), `duration_s: 0.4` | **ĐẠT** |
+| **Bảng xếp hạng cục bộ** (tên 3–12 ký tự, top 10, tie-break thời gian sớm hơn, lưu đĩa, menu UI, `--export-leaderboard`) | Test #19 + `node dist/run.js --export-leaderboard` + `/api/leaderboard` | `PASS 19` (validate ASCII & tiếng Việt, top 10 + tie-break, xuất `{"entries":[...]}` mã `0`) | **ĐẠT** |
+| **Dễ tiếp cận (Accessibility)** (Đổi 9 phím + báo trùng + khôi phục mặc định; Phụ đề + mũi tên Bóng Mực; Giảm chuyển động; UI `≥ 18px` + `×1.25`) | `npm run typecheck && npm run build:web` + kiểm tra trực tiếp CSS/DOM | `tsc --noEmit` `0` lỗi, `vite build` thành công (`1.83 s`), tất cả 4 nhóm lưu qua `localStorage` | **ĐẠT** |
+| **Contract v1.3** (`contract_version: "1.3"`, thêm `bench_cmd`, `soak_cmd`, giữ toàn bộ Phase 1–3) | `npm run verify` (Test #1–#19) | **19/19 PASS**, Full Đêm 3 (`18,000` tick) `385 ms ≤ 30 s` | **ĐẠT** |
+| **Đóng gói & Tài liệu** (`README.md` `≤ 3` lệnh + ảnh chụp, `CHANGELOG.md` 4 phase, `CREDITS.md`, `LICENSE`, `Dockerfile`, `docs/RETRO.md`) | Kiểm tra trực tiếp file trong repo | [`README.md`](README.md), [`docs/screenshot.png`](docs/screenshot.png), [`CHANGELOG.md`](CHANGELOG.md), [`CREDITS.md`](CREDITS.md), [`LICENSE`](LICENSE), [`Dockerfile`](Dockerfile), [`docs/RETRO.md`](docs/RETRO.md) | **ĐẠT** |
+
+## 3. Kết quả đo thực tế (Phase 4)
+
+### 3.1. `bench.json` (chạy thật 30 giây, `--seed 42`)
+
+```json
+{
+  "contract_version": "1.3",
+  "avg_fps": 109.1,
+  "p1_low_fps": 67.2,
+  "frame_ms_p95": 14,
+  "frames": 3275,
+  "load_ms": 2002,
+  "peak_mem_mb": 846.5,
+  "vsync_off": true,
+  "renderer": "Three.js r170 / WebGL2 (ANGLE (Intel, Intel(R) UHD Graphics (0x00009A68) Direct3D11 vs_5_0 ps_5_0, D3D11))",
+  "os": "Windows_NT 10.0.22631 (x64)"
+}
+```
+
+### 3.2. `soak.json` (chạy thật 10 Đêm liên tiếp, `--seed 7`)
+
+```json
+{
+  "nights": 10,
+  "crashes": 0,
+  "results": ["lost", "lost", "lost", "lost", "lost", "lost", "lost", "lost", "lost", "lost"],
+  "mem_start_mb": 38.1,
+  "mem_end_mb": 40.8,
+  "duration_s": 0.4
+}
+```
+
+### 3.3. Kết quả `npm run verify` (19/19 PASS)
+
+```text
+=== Test Contract v1.3 Suite (2A202603548-NgoDucThinh) ===
+PASS  1. [Regression] Determinism (byte-for-byte) & Contract v1.3 Snapshot/End schema
+PASS  2. [Regression] Exit code 2 on invalid --inputs / --scenario
+PASS  3. [Regression] Movement rotation (cam_yaw_deg = 0 & 90), vector norm (>1), jump
+PASS  4. [Updated for Phase 3] Light 5th lantern -> NO early win; survive to dawn -> dawn_survived + v1.2 score
+PASS  5. [Regression] Shade hit drops floor(carried/2) motes (TTL 480) & recoils 2m
+PASS  6. [Regression] Safe radius (6m) blocks external shades & pushes interior shade out in <= 30 ticks
+PASS  7. [Updated for Phase 3] Pulse: +5 normal stun, +15 drain stun, 4m push over 15 ticks, stun ends -> wander
+PASS  8. [Regression] Pre-lit scenario sets fuel=100 by default, emits 0 events & 0 score, does not boost capacity
+PASS  9. [Regression Phase 2] Dash (14 m/s, 0.2s, air-dash preserves Y, 1.5s cooldown)
+PASS  10. [Regression Phase 2] Fall off island (Y < -10) -> lost + respawn after 60 ticks
+PASS  11. [Regression Phase 2] Night 2 Jump Pad + Wind Charm + Drifter steal & pulse drop
+PASS  12. [Regression Phase 2] Night 3 3-tier jump pad + Wind gust + Pause/Resume
+PASS  13. [Phase 3] Fuel decay (1/s), Refuel ceil((100-fuel)/10), full lantern ignored, lantern_out & Relight (5 motes, +40)
+PASS  14. [Phase 3] Dynamic Capacity: 10 + 2 * successful_lights capped at 20
+PASS  15. [Phase 3] Shade drain AI: fuel < 30 loses safe zone, wander -> drain (5/s + 1/s), fuel_drain every 60 ticks, refuel >= 30 pushes shade out
+PASS  16. [Phase 3] Dawn survival threshold: 3/5 wins dawn_survived, 2/5 loses dawn
+      -> Full Night 3 (18,000 ticks) completed in 385 ms
+PASS  17. [Phase 3 Performance] Full Night 3 (18,000 ticks = 300s) finishes in <= 30s
+PASS  18. [Phase 4] Soak runner: multi-night stability, 0 crashes, RSS <= 1.2x, schema
+PASS  19. [Phase 4] Leaderboard validation, top-10 tie-break sorting & CLI --export-leaderboard
+
+Summary: 19 passed, 0 failed
+```
+
+## 4. Lỗi thực tế phát hiện & khắc phục trong Phase 4
+1. **Khựng khung hình `p1_low_fps = 1.8 FPS` ở lần đo đầu tiên:** Phát hiện nguyên nhân từ `toDataURL()` chạy giữa pha đo + cờ `--disable-frame-rate-limit` làm nghẽn hàng đợi Direct3D11 trên Intel UHD Graphics + polling PowerShell đồng bộ. Sau khi dời chụp ảnh sang cuối benchmark, giữ `--disable-gpu-vsync`, khóa `pixelRatio = 1` và đo RSS bất đồng bộ, `p1_low_fps` tăng từ `1.8` lên **`67.2 FPS`**.
+2. **Tỷ số RSS `soak.json` ở lần đo đầu (`1.33×`):** Do warmup 60 tick quá ngắn khiến V8 TurboFan biên dịch JIT sau khi đã ghi `mem_start_mb`. Sau khi nâng warmup lên `3,000` tick trước khi tải Đêm 1, tỷ số RSS giảm còn **`1.07×`** (`38.1 → 40.8 MB`).
+- **Ước tính token Phase 4:** ~80,000–90,000 tokens (chi tiết đầy đủ trong [`docs/RETRO.md`](docs/RETRO.md)).
 
 ---
 

@@ -1,17 +1,21 @@
 {
   "name": "dao-den-long",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "Đảo Đèn Lồng — 3D game & deterministic headless simulation (Day 12 AI SDLC Lab)",
+  "description": "Đảo Đèn Lồng — 3D game & deterministic headless simulation (Day 12 AI SDLC Lab · v1.0.0)",
   "scripts": {
     "dev": "vite",
+    "start": "node dist/run.js",
     "build:headless": "esbuild src/sim/headless.ts --bundle --platform=node --format=esm --target=node20 --outfile=dist/headless.js",
+    "build:cli": "esbuild src/sim/run.ts src/sim/bench.ts src/sim/soak.ts --bundle --platform=node --format=esm --target=node20 --outdir=dist",
     "build:web": "vite build",
-    "build": "npm run typecheck && npm run build:headless && npm run build:web",
+    "build": "npm run typecheck && npm run build:headless && npm run build:cli && npm run build:web",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
-    "test": "npm run build:headless && node --import tsx tests/contract.test.ts",
+    "test": "npm run build:headless && npm run build:cli && node --import tsx tests/contract.test.ts",
+    "bench": "node dist/bench.js --seed 42 --duration 30 --out bench.json",
+    "soak": "node dist/soak.js --seed 7 --nights 10 --out soak.json",
     "verify": "npm run build && npm test"
   },
   "dependencies": {

@@ -3,6 +3,12 @@ import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import {
+  addLeaderboardEntry,
+  isValidPlayerName,
+  sortAndTrimLeaderboard,
+  type LeaderboardEntry,
+} from '../src/sim/leaderboard.ts';
 import type {
   EndRecord,
   EventRecord,
@@ -16,8 +22,10 @@ const CONTRACT = JSON.parse(
 ) as GameContract;
 const T = CONTRACT.tuning;
 const HEADLESS_JS = path.join(ROOT, 'dist', 'headless.js');
+const SOAK_JS = path.join(ROOT, 'dist', 'soak.js');
+const RUN_JS = path.join(ROOT, 'dist', 'run.js');
 
-const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ddl-contract-v12-'));
+const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ddl-contract-v13-'));
 
 interface RunResult {
   status: number | null;
@@ -111,8 +119,10 @@ console.log(`=== Test Contract v${CONTRACT.contract_version} Suite (${CONTRACT.t
 // PHASE 1–2 REGRESSION SUITE (updated where TICKET-03 replaced prior rules)
 // =========================================================================
 
-test('1. [Regression] Determinism (byte-for-byte) & Contract v1.2 Snapshot/End schema', () => {
-  assert.equal(CONTRACT.contract_version, '1.2');
+test('1. [Regression] Determinism (byte-for-byte) & Contract v1.3 Snapshot/End schema', () => {
+  assert.equal(CONTRACT.contract_version, '1.3');
+  assert.ok(typeof CONTRACT.bench_cmd === 'string' && CONTRACT.bench_cmd.length > 0, 'bench_cmd required in v1.3');
+  assert.ok(typeof CONTRACT.soak_cmd === 'string' && CONTRACT.soak_cmd.length > 0, 'soak_cmd required in v1.3');
   const r1 = runHeadless(
     ['--seed', '1337', '--night', '1', '--ticks', '600', '--snapshot-every', '10'],
     'det1.jsonl',
@@ -667,6 +677,81 @@ test('17. [Phase 3 Performance] Full Night 3 (18,000 ticks = 300s) finishes in <
   assert.equal(res.end?.ticks, 18000);
   assert.ok(res.elapsedMs <= 30_000, `Took ${res.elapsedMs.toFixed(1)}ms (> 30s)`);
   console.log(`      -> Full Night 3 (18,000 ticks) completed in ${res.elapsedMs.toFixed(0)} ms`);
+});
+
+// =========================================================================
+// PHASE 4 RELEASE & NON-FUNCTIONAL SCENARIOS (TICKET-04 · Contract v1.3)
+// =========================================================================
+
+test('18. [Phase 4] Soak runner: multi-night stability, 0 crashes, RSS <= 1.2x, schema', () => {
+  const outPath = path.join(tmpDir, 'soak_3nights.json');
+  const proc = spawnSync(
+    process.execPath,
+    [SOAK_JS, '--seed', '7', '--nights', '3', '--out', outPath],
+    { cwd: ROOT, encoding: 'utf8' },
+  );
+  assert.equal(proc.status, 0, `soak stderr: ${proc.stderr}`);
+  assert.ok(fs.existsSync(outPath), 'soak output file must be written');
+  const data = JSON.parse(fs.readFileSync(outPath, 'utf8')) as {
+    nights: number;
+    crashes: number;
+    results: string[];
+    mem_start_mb: number;
+    mem_end_mb: number;
+    duration_s: number;
+  };
+  assert.equal(data.nights, 3);
+  assert.equal(data.crashes, 0);
+  assert.equal(data.results.length, 3);
+  assert.ok(data.results.every((r) => r === 'won' || r === 'lost'));
+  assert.ok(data.mem_start_mb > 0);
+  assert.ok(
+    data.mem_end_mb <= 1.2 * data.mem_start_mb,
+    `RSS grew too much: ${data.mem_start_mb} -> ${data.mem_end_mb}`,
+  );
+  assert.ok(data.duration_s >= 0);
+});
+
+test('19. [Phase 4] Leaderboard validation, top-10 tie-break sorting & CLI --export-leaderboard', () => {
+  assert.equal(isValidPlayerName('May_01'), true);
+  assert.equal(isValidPlayerName('Mây_Đèn'), true);
+  assert.equal(isValidPlayerName('ab'), false, 'Too short (<3)');
+  assert.equal(isValidPlayerName('abcdefghijklm'), false, 'Too long (>12)');
+  assert.equal(isValidPlayerName('bad name!'), false, 'Invalid chars');
+
+  let entries: LeaderboardEntry[] = [];
+  for (let i = 0; i < 12; i++) {
+    entries = addLeaderboardEntry(entries, {
+      name: `Player_${i}`,
+      score: 100 + i * 10,
+      nights_won: i % 4,
+      seed: 100 + i,
+      achieved_at: `2026-11-20T10:00:${String(i).padStart(2, '0')}+07:00`,
+    });
+  }
+  // Add tie on top score (210) with an earlier timestamp -> must rank #1
+  entries = addLeaderboardEntry(entries, {
+    name: 'EarlyTie',
+    score: 210,
+    nights_won: 3,
+    seed: 42,
+    achieved_at: '2026-11-20T09:00:00+07:00',
+  });
+  const sorted = sortAndTrimLeaderboard(entries);
+  assert.equal(sorted.length, 10, 'Must cap at top 10');
+  assert.equal(sorted[0].name, 'EarlyTie', 'Earlier timestamp wins tie-break');
+  assert.equal(sorted[1].name, 'Player_11');
+
+  // Test CLI: <run_cmd> --export-leaderboard out.json
+  const exportOut = path.join(tmpDir, 'lb_export.json');
+  const proc = spawnSync(
+    process.execPath,
+    [RUN_JS, '--export-leaderboard', exportOut],
+    { cwd: ROOT, encoding: 'utf8' },
+  );
+  assert.equal(proc.status, 0, `export stderr: ${proc.stderr}`);
+  const exported = JSON.parse(fs.readFileSync(exportOut, 'utf8')) as { entries: unknown };
+  assert.ok(Array.isArray(exported.entries), 'Exported JSON must have {"entries": [...]}');
 });
 
 fs.rmSync(tmpDir, { recursive: true, force: true });

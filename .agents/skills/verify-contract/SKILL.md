@@ -1,19 +1,23 @@
 ---
 name: verify-contract
-description: Build the headless runner and 3D web app, run the full Test Contract v1.2 verification suite (Phase 1-2 regressions + Phase 3 fuel/drain/dawn/capacity/score + full-night performance), check byte-for-byte determinism, and record proof outputs.
+description: Build the headless runner, release CLIs, and 3D web app, run the full Test Contract v1.3 verification suite (Phase 1-3 regressions + Phase 4 soak/leaderboard), run real 3D benchmark and 10-night soak checks, and verify evidence outputs.
 ---
 
-# Skill: Verify Test Contract v1.2 & Collect Evidence
+# Skill: Verify Test Contract v1.3 & Collect Release Evidence
 
-Use this skill before tagging `phase-3` or after any change to `src/sim/` or `game.contract.json`.
+Use this skill before tagging `phase-4` / releasing `v1.0.0` or after any change to `src/sim/`, `src/web/bench_mode.ts`, or `game.contract.json`.
 
 ## Steps
-1. Run `npm run verify` (`npm run typecheck && npm run build:headless && npm run build:web && npm test`).
-2. Confirm exit code is `0` and all Contract v1.2 assertions (non-replaced Phase 1–2 regressions + fuel decay/refuel/`lantern_out`/relight, dynamic capacity, Shade `drain` + `fuel_drain` + safe-zone restore push + `+15` drain stun, `dawn_survived` vs `dawn` win/loss, and full Night 3 performance `<= 30s`) print `PASS`.
-3. Run a determinism check via CLI on Night 3:
+1. Run `npm run verify` (`npm run typecheck && npm run build:headless && npm run build:cli && npm run build:web && npm test`).
+2. Confirm exit code is `0` and all 19 Contract v1.3 assertions print `PASS` (Phase 1–3 regressions + full Night 3 performance `<= 30s` + Phase 4 soak + leaderboard validation & `--export-leaderboard`).
+3. Run the official 10-night soak test:
    ```bash
-   node dist/headless.js --seed 42 --night 3 --ticks 1800 --snapshot-every 60 --out docs/proof/phase-3/night3_det1.jsonl
-   node dist/headless.js --seed 42 --night 3 --ticks 1800 --snapshot-every 60 --out docs/proof/phase-3/night3_det2.jsonl
+   node dist/soak.js --seed 7 --nights 10 --out soak.json
    ```
-   Verify identical SHA-256 hashes, then remove `night3_det2.jsonl`.
-4. Confirm ADR (`docs/ADR-001-lantern-fuel-and-dawn-survival.md`), `CHANGELOG.md`, and `EVIDENCE.md` match the actual test output.
+   Verify `crashes === 0` and `mem_end_mb <= 1.2 * mem_start_mb`.
+4. Run the official 30-second 3D benchmark:
+   ```bash
+   node dist/bench.js --seed 42 --duration 30 --out bench.json
+   ```
+   Verify exit code `0`, `contract_version === "1.3"`, `avg_fps >= 60`, `p1_low_fps >= 30`, and `load_ms <= 10000`.
+5. Confirm `EVIDENCE.md`, `CHANGELOG.md`, `README.md`, `CREDITS.md`, and `docs/RETRO.md` match actual measured results.
