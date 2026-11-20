@@ -1,9 +1,9 @@
-# Đảo Đèn Lồng — Đêm 1: Đảo Bến
+# Đảo Đèn Lồng — Ba Hòn Đảo (Phase 2 · Contract v1.1)
 
-> **Day 12 · AI SDLC Lab (Phase 1)** · Sinh viên: **Ngô Đức Thịnh** (`2A202603548-NgoDucThinh`)
+> **Day 12 · AI SDLC Lab (Phase 2 — TICKET-02)** · Sinh viên: **Ngô Đức Thịnh** (`2A202603548-NgoDucThinh`)
 > Video demo: *(Sẽ cập nhật ở Phase 4 / Release `v1.0.0`)*
 
-**Đảo Đèn Lồng** là game 3D góc nhìn thứ ba xây dựng theo kiến trúc **Headless-First** (TypeScript + Three.js + Vite + Node.js). Mây — người giữ đèn nhỏ tuổi đội nón lá treo đèn lồng — thu thập đom đóm quanh Đảo Bến để thắp sáng 5 Đèn Lồng Lớn trước khi bình minh tới, đồng thời né tránh hoặc đẩy lùi Bóng Mực trong sương đêm.
+**Đảo Đèn Lồng** là game 3D góc nhìn thứ ba xây dựng theo kiến trúc **Headless-First** (TypeScript + Three.js + Vite + Node.js), gồm chuỗi **3 Đêm (Đảo Bến · Đảo Cau · Đảo Chuông)** cùng chế độ mô phỏng không giao diện đạt chuẩn **Test Contract v1.1**.
 
 ---
 
@@ -17,7 +17,7 @@ npm run build
 npm run dev
 ```
 
-Sau khi chạy `npm run dev`, mở trình duyệt tại địa chỉ hiển thị (mặc định `http://localhost:5173`) và bấm **Bắt đầu Đêm 1**.
+Mở trình duyệt tại địa chỉ hiển thị (mặc định `http://localhost:5173`) để chọn Đêm, Nhân vật, Chủ đề bản đồ và bắt đầu hành trình.
 
 ---
 
@@ -25,89 +25,74 @@ Sau khi chạy `npm run dev`, mở trình duyệt tại địa chỉ hiển th�
 
 | Phím / Thao tác | Hành động |
 |---|---|
-| `W` `A` `S` `D` (hoặc `↑` `↓`) | Di chuyển theo hướng camera |
-| Kéo chuột trái/phải hoặc `←` `→` | Xoay camera quanh Mây (`cam_yaw_deg`) |
-| `Space` | Nhảy |
-| `E` hoặc `F` | Nạp đom đóm vào Đèn Lồng Lớn ở gần (`interact`) |
-| `Q` hoặc `Shift` | **Tỏa sáng (Pulse)** — tiêu thụ ánh sáng để đẩy lùi & làm choáng Bóng Mực |
-| `M` | Bật / tắt âm thanh tổng hợp WebAudio |
+| `W` `A` `S` `D` (hoặc `↑` `↓`) | Di chuyển (`6.0 m/s`; `7.2 m/s` khi có Bùa Gió) |
+| Kéo chuột hoặc `←` `→` | Xoay camera quanh nhân vật (`cam_yaw_deg`) |
+| `Space` | Nhảy (`7.0 m/s`, chỉ khi chạm đất) |
+| `Shift` | **Lướt (Dash)** — `14.0 m/s` trong `0.2 s`, hồi chiêu `1.5 s` (giữ độ cao trên không) |
+| `E` hoặc `F` | Nạp đom đóm vào Đèn Lồng Lớn gần nhất trong `2.0 m` (`interact`) |
+| `Q` | **Tỏa Sáng (Pulse)** — tốn `3` đom đóm, bán kính 3D `5.0 m`, hồi chiêu `3.0 s` |
+| `Esc` hoặc `P` | **Tạm dừng** (dừng hoàn toàn logic, mở menu Cài đặt / Chơi lại / Về Menu) |
+| `M` | Bật / tắt âm thanh nhanh |
 
 ---
 
-## 3. Luật chơi & Công thức tính điểm
+## 3. Nội dung 3 Đêm & Công thức tính điểm (Contract v1.1)
 
-Mọi thông số cân bằng được đọc trực tiếp từ nguồn duy nhất [`game.contract.json`](game.contract.json) (`tuning`):
+Mọi hằng số cân bằng được đọc trực tiếp từ nguồn duy nhất [`game.contract.json`](game.contract.json):
 
-- **Đom đóm (Motes):** Tự động nhặt trong bán kính `1.5m` (tối đa mang `10`).
-- **Đèn Lồng Lớn (`L1`–`L5`):** Đứng trong bán kính `2.5m` và bấm `E` để nạp; đủ `5` đom đóm đèn sẽ sáng và tạo **vùng an toàn** bán kính `5.0m` chặn Bóng Mực.
-- **Tỏa sáng (Pulse):** Tiêu tốn `2` đom đóm, hồi chiêu `4.0s`, đẩy lùi mọi Bóng Mực trong bán kính `6.0m` thêm `4.0m` và làm choáng `3.0s`.
-- **Bóng Mực (Shades):** Đuổi theo Mây (`3.5 m/s`); chạm trong `1.2m` làm mất `1` ngọn lửa (máu, ban đầu `3`), rơi `50%` đom đóm đang mang (`Math.round(carried * 0.5)`) và kích hoạt bất tử `1.5s`.
-- **Thắng / Thua:** Thắp sáng cả 5 đèn → **Thắng (`all_lit`)**; hết ngọn lửa → **Thua (`no_flames`)**; hết `300s` → **Thua (`dawn`)**.
+| Đêm | Đảo | Thời gian | Đèn Lồng Lớn | Đặc trưng nổi bật |
+|---|---|---:|---:|---|
+| **Đêm 1** | **Đảo Bến** | `300 s` | `5` (`L1–L5`) | Đảo tròn `40 m`, rơi khỏi đảo (`Y < -10`) mất 1 Ngọn Lửa & hồi sinh sau `1 s` |
+| **Đêm 2** | **Đảo Cau** | `330 s` | `6` (`L1–L6`) | Hai đảo `28 m` nối bằng cầu tre không lan can, 2 Bục Nhảy, Bùa Gió `C1`, **Gió Lạc** |
+| **Đêm 3** | **Đảo Chuông** | `360 s` | `7` (`L1–L7`) | Đảo `45 m` 3 tầng (`Y = 0/3/6`), 2 dốc `30°/150°`, Bục Nhảy lên Tháp Chuông, **Gió mạnh** mỗi `30 s`, 2 Bùa Gió, Bóng Mực `4.5 m/s` |
 
-### Công thức tính điểm (`tuning.score`)
+### Công thức tính điểm chuẩn hóa (`tuning.score`)
 
 | Nguồn điểm | Điểm |
 |---|---|
-| Nhặt 1 đom đóm (`per_mote`) | `+10` |
-| Thắp sáng 1 Đèn Lồng Lớn (`per_lantern`) | `+100` |
-| Làm choáng 1 Bóng Mực bằng Pulse (`per_stun`) | `+25` |
-| Thưởng thời gian còn lại khi thắng (`per_second_left`) | `+2 × floor(time_left_s)` |
-| Thưởng ngọn lửa còn lại khi thắng (`per_flame_left`) | `+50 × flames` |
+| Mỗi đom đóm **nạp** vào đèn (`per_mote`) | `+10` |
+| Thắp sáng 1 Đèn Lồng Lớn (`per_lantern`, đủ `10` đom đóm) | `+100` |
+| Mỗi Bóng Mực trúng Tỏa Sáng (`per_stun`, kể cả đang choáng) | `+5` |
+| Thưởng khi thắng Đêm | `+ floor(time_left_s) × 2 + 50 × flames` |
+
+Tổng điểm chiến dịch là tổng điểm của các Đêm đã thắng.
 
 ---
 
-## 4. Chế độ Headless & Kiểm thử (Test Contract v1.0)
-
-Chạy toàn bộ bộ test tự động xác minh Test Contract v1.0:
-
-```bash
-npm test
-```
-
-Hoặc kiểm tra toàn diện (typecheck + build headless + build web + test):
+## 4. Chế độ Headless & Kiểm thử (Test Contract v1.1)
 
 ```bash
 npm run verify
 ```
 
-Chạy trực tiếp chế độ Headless CLI (60 tick/s, tất định byte-for-byte theo `--seed`):
+Hoặc chạy trực tiếp chế độ Headless CLI cho Đêm `1`, `2`, hoặc `3`:
 
 ```bash
-node dist/headless.js --seed 42 --night 1 --ticks 600 --snapshot-every 10 --out out.jsonl
+node dist/headless.js --seed 42 --night 3 --ticks 1800 --snapshot-every 60 --out out.jsonl
 ```
 
-Hỗ trợ đầy đủ `--scenario <file.json>` và `--inputs <file.json>`. Thoát mã `0` khi thành công, mã `2` khi file `--inputs`/`--scenario` sai JSON, sai kiểu hoặc `tick` không tăng nghiêm ngặt.
+Hỗ trợ đầy đủ `--scenario <file.json>` và `--inputs <file.json>` theo chuẩn **Contract v1.1** (thoát `0` khi thành công, `2` khi lỗi định dạng/schema/tick không tăng nghiêm ngặt). Chạy trọn Đêm 3 (`21,600` tick) chỉ mất **~0.3 giây** (ngưỡng yêu cầu `<= 30 s`).
 
 ---
 
 ## 5. Sáng tạo của tôi
 
-Mọi yếu tố sáng tạo nằm hoàn toàn ở lớp hiển thị & âm thanh (`src/web/`), **không làm thay đổi** bất kỳ tọa độ, trạng thái, điểm số hay output JSONL nào của chế độ `headless`:
+Mọi phần sáng tạo được cô lập 100% trong lớp hiển thị & âm thanh (`src/web/`), **không làm thay đổi** tọa độ, vật lý, điểm số hay đầu ra headless JSONL:
 
-1. **La bàn Ánh sáng (Diegetic Lantern Compass):** Mũi tên ánh vàng nhỏ xoay nhẹ quanh chân Mây luôn hướng về Đèn Lồng Lớn chưa sáng gần nhất, giúp người chơi định hướng tự nhiên trong màn sương mà không cần minimap rối mắt.
-2. **Âm thanh tổng hợp WebAudio (`src/web/audio.ts`):** Không dùng file âm thanh ngoài; tổng hợp trực tiếp thang âm ngũ cung (pentatonic chime tăng cao độ theo số đom đóm đang mang), tiếng chuông ấm khi thắp đèn, sóng âm khi Tỏa sáng và giai điệu thắng/thua (bật/tắt bằng phím `M`).
-3. **Đảo sáng dần & Hiệu ứng hạt (`src/web/renderer.ts`):** Bầu trời, sương mù, ánh sáng môi trường chuyển dần từ xanh tím sâu sang ánh vàng cổ tích ấm áp mỗi khi thắp thêm đèn, kèm quỹ đạo đom đóm bay quanh Mây, vòng sóng xung kích Pulse và hiệu ứng hạt khi nhặt/nạp ánh sáng.
+1. **Sảnh Chọn Nhân Vật & Chủ Đề Bản Đồ kèm Xem Trước 3D Trực Tiếp (`src/web/themes.ts`):**
+   - **4 Nhân vật có thể chọn:** *Mây* (mặc định đúng bảng màu chuẩn `#E8E2D0` / `#C8102E`), *Linh* (Học sĩ đèn trời), *Mộc* (Kiểm lâm rừng đêm), *Sao* (Thủy thủ biển mây).
+   - **4 Chủ đề bản đồ & Loại ma đặc trưng:** *Cổ Tích Chuẩn · Bóng Mực* (mặc định đúng bảng màu chuẩn Phase 2), *Rừng Trúc Sương · Ma Trơi Rừng Trúc*, *Đỉnh Tuyết Băng · Oan Hồn Tuyết*, và *Đền Đỏ Chạng Vạng · Quỷ Mặt Nạ Đỏ*.
+2. **Âm thanh tổng hợp WebAudio (`src/web/audio.ts`):** Nhạc nền đêm ngũ cung nhẹ nhàng cùng đủ hiệu ứng âm thanh tổng hợp trực tiếp (không cần file âm thanh ngoài), có lưu cấu hình âm lượng & độ nhạy chuột qua `localStorage`.
+3. **La bàn Ánh sáng + Mũi tên ngoài màn hình + Hiệu ứng Hạt & Lá bay theo Gió:** Kết hợp vòng la bàn dưới chân Mây, mũi tên mép màn hình chỉ đèn chưa sáng gần nhất, vòng sóng Pulse, quỹ đạo đom đóm bay quanh Mây và lá bay báo gió trên Đảo Chuông.
 
 ---
 
 ## 6. Cấu trúc dự án & Tài liệu
 
-```text
-.
-├── game.contract.json                  # Nguồn chân lý duy nhất cho tuning & lệnh chạy
-├── AGENTS.md                           # Harness AI: lệnh, bất biến kỹ thuật, quy trình
-├── .agents/skills/verify-contract/     # Skill kiểm chứng tự động Test Contract
-├── .github/workflows/ci.yml            # CI tự động chạy npm run verify khi push/tag
-├── EVIDENCE.md                         # Giả định, bảng truy vết bằng chứng, log AI & token
-├── CREDITS.md / LICENSE                # Bản quyền & nguồn tài nguyên (100% procedural)
-├── src/
-│   ├── sim/                            # Pure Simulation Core (0 dependency DOM/WebGL)
-│   │   ├── prng.ts                     # Mulberry32 PRNG tất định
-│   │   ├── types.ts                    # Schema state, input, scenario, JSONL
-│   │   ├── validators.ts               # Kiểm tra --inputs/--scenario (exit code 2)
-│   │   ├── engine.ts                   # SimulationEngine cố định 60Hz
-│   │   └── headless.ts                 # CLI entrypoint build ra dist/headless.js
-│   └── web/                            # Giao diện 3D Three.js, âm thanh WebAudio, HUD
-├── tests/contract.test.ts              # 10 bài test tự động Test Contract v1.0
-└── docs/proof/phase-1/                 # File bằng chứng JSONL mẫu
-```
+- [`game.contract.json`](game.contract.json) — Nguồn chân lý duy nhất (`contract_version: "1.1"`).
+- [`AGENTS.md`](AGENTS.md) & [`.agents/skills/verify-contract/SKILL.md`](.agents/skills/verify-contract/SKILL.md) — Harness AI đã cập nhật cho Phase 2.
+- [`docs/SPEC_PHASE2.md`](docs/SPEC_PHASE2.md) — Đặc tả & Acceptance Criteria cho toàn bộ Phần 3.
+- [`EVIDENCE.md`](EVIDENCE.md) — Bằng chứng thực tế, lý do cập nhật test Phase 1, kết quả benchmark & nhật ký AI/token.
+- [`src/sim/`](src/sim/) — Pure Simulation Core (`maps.ts`, `engine.ts`, `validators.ts`, `prng.ts`, `headless.ts`).
+- [`src/web/`](src/web/) — 3D Three.js Renderer, Themes/Menu, WebAudio, HUD & Campaign Controller.
+- [`tests/contract.test.ts`](tests/contract.test.ts) — 16 bài test tự động (Phase 1 regression + toàn bộ tính năng Phase 2 + benchmark 21,600 tick).

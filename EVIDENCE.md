@@ -1,46 +1,52 @@
-# EVIDENCE — Phase 1 (Đêm 1: Đảo Bến)
+# EVIDENCE — Đảo Đèn Lồng (Phase 1 & Phase 2)
 
-Tài liệu bằng chứng kiểm chứng, các giả định kỹ thuật, đánh giá phase và nhật ký sử dụng AI cho **Phase 1**.
+Tài liệu bằng chứng kiểm chứng, các giả định kỹ thuật, lịch sử cập nhật test khi yêu cầu thay đổi, đánh giá từng phase và nhật ký sử dụng AI.
 
 ---
 
-## 1. Giả định kỹ thuật (Assumptions cho các điểm mở)
+# PHASE 2 — TICKET-02: "Ba hòn đảo" (Contract v1.1)
 
-| Hạng mục | Giả định áp dụng | Lý do & nhất quán |
+## 1. Giả định kỹ thuật & Làm rõ (Phase 2)
+
+| Hạng mục | Quyết định / Giả định | Lý do |
 |---|---|---|
-| Hình dạng & kích thước Đảo Bến | Hình tròn tâm `(0, 0, 0)`, bán kính `48.0m`, mặt đất `Y = 0`. `fall_enabled = false`. | Đủ rộng cho 5 đèn ở vòng bán kính `25m` và Bóng Mực xuất hiện ở vành ngoài `30m–42m`. Khi chạy `--scenario`, không chặn biên nhân vật để không cản các bài test di chuyển quãng đường lớn. |
-| Vị trí mặc định 5 Đèn Lồng Lớn | Chia đều trên vòng bán kính `25.0m`: `L1 = [0, 0, 25]`, `L2 = [23.776, 0, 7.725]`, `L3 = [14.695, 0, -20.225]`, `L4 = [-14.695, 0, -20.225]`, `L5 = [-23.776, 0, 7.725]`. | `L1` khớp trực tiếp ví dụ trong Test Contract v1.0; phân bố đối xứng giúp trải nghiệm chơi cân bằng. |
-| Sinh đom đóm ngẫu nhiên (`random_motes: true`) | Khởi tạo `16` đom đóm ở tick `0` (bán kính `5m–36m`, cách chân đèn `>= 2.2m`), sinh thêm `1` đom đóm mỗi `180` tick (`3s`) nếu số lượng `< 20`. | Luôn đủ đom đóm trên đảo để thắp 5 đèn (`25` đom đóm) + dùng Pulse, tất định 100% theo `Mulberry32(seed)`. |
-| Sinh Bóng Mực ngẫu nhiên (`random_shades: true`) | Khởi tạo `2` Bóng Mực ở tick `0` (`S1`, `S2`, bán kính `30m–42m`, không phát event ở tick 0); sinh thêm `1` mỗi `1200` tick (`20s`) tối đa `5` con, cách người chơi `>= 12m` và ngoài `safe_radius + 1m`, phát `shade_spawned`. | Tạo áp lực ngay từ đầu nhưng không gây mất máu tức thì ở vị trí xuất phát `(0, 0, 0)`. |
-| Làm tròn đom đóm bị rơi khi dính đòn | `dropped = Math.min(carried, Math.round(carried * hit_drop_ratio))`. Đom đóm rơi tan biến (không spawn lại thành entity mới). | Đối xứng (mang `1` vẫn rơi `1` khi tỉ lệ `0.5`, mang `4` rơi `2`), tránh làm biến động bất ngờ `motes_active` trong kịch bản `random_motes: false`. |
-| Điểm thưởng thời gian khi thắng | `Math.floor(time_left_s) * per_second_left + flames * per_flame_left`. | Đảm bảo tổng điểm luôn là số nguyên không âm, tính theo số giây nguyên còn lại. |
-| Biên an toàn `safe_radius` sau làm tròn 3 chữ số | Đẩy Bóng Mực đang đuổi ra khoảng cách `safe_radius + 0.002m` (`5.002m`). | Đảm bảo sau khi làm tròn tọa độ 3 chữ số thập phân (`round3`), khoảng cách XZ từ Bóng Mực tới đèn sáng luôn thỏa `>= safe_radius` (`5.0`). |
-| Nhảy (`jump`) | Vận tốc đầu `7.5 m/s`, trọng lực `-20.0 m/s²`, chỉ kích hoạt khi đứng trên mặt đất (`y = 0`) theo cạnh lên (rising edge). | Không ảnh hưởng khoảng cách mặt phẳng ngang XZ theo đúng Test Contract. |
+| Quy ước góc mặt phẳng XZ | `x = r · cos(α)`, `z = r · sin(α)` với `α` đo từ `+X`. | Khớp 100% với Đêm 3 Tầng 1 (`z > 0`), dốc tại `30°` & `150°`, và 8 điểm sinh đom đóm Tầng 1 (`20°..160°`). |
+| Điểm xuất phát Đêm 3 | `(0, 0, -10)` hướng `+Z` (trên Tầng 0, ngoài Tầng 2 bán kính `8 m` và Tháp Chuông `2 m`). | Tại `(0, 0, 0)` của Đêm 3 là tâm Tháp Chuông không đi vào được; nếu `--scenario` truyền `player.pos` thì luôn tôn trọng `scenario`. |
+| Thời điểm phát sự kiện `night_start` | Phát 1 lần tại `sim_tick = 1` (bước mô phỏng đầu tiên). | Giữ nguyên bất biến Phase 1 (`--ticks 0` dựng scenario phát `0` event) đồng thời đảm bảo mọi lượt chạy thật đều có `night_start: { night }`. |
+| Tăng tốc / dừng `<= 0.1 s` | Đáp ứng vận tốc ngay trong 1 tick (`0 s <= 0.1 s`). | Đạt chuẩn `<= 0.1 s` và đảm bảo test hồi quy di chuyển Phase 1 (`6 m/s × 1 s = 6.0 m`) chính xác tuyệt đối. |
+| Cô lập sáng tạo (Menu chọn Nhân vật / Chủ đề / Loại ma) | Đặt 100% trong `src/web/themes.ts` & `src/web/renderer.ts`; chủ đề mặc định dùng đúng bảng màu chuẩn Phase 2. | Giữ `src/sim/` thuần tuyệt đối, không ảnh hưởng bất kỳ output JSONL headless nào. |
 
----
+## 2. Cập nhật Test Phase 1 do Thay đổi Yêu cầu ở Phase 2 (Không tắt âm thầm)
 
-## 2. Bảng truy vết Yêu cầu → Kiểm chứng → Bằng chứng
+Theo quy định của `AGENTS.md` và `CHECKPOINTS.md`, các test Phase 1 bị ảnh hưởng trực tiếp bởi số liệu chuẩn hóa của **TICKET-02** đã được cập nhật minh bạch:
 
-| Yêu cầu Phase 1 | Cách kiểm chứng | Bằng chứng | Kết quả |
+| Test cũ (Phase 1) | Thay đổi từ TICKET-02 (Phase 2) | Cách cập nhật |
+|---|---|---|
+| Test #4 (`lantern_cost = 5`, `+10` khi nhặt đom đóm) | Chuẩn hóa `lantern_cost = 10`, cộng `+10` mỗi đom đóm **nạp** (`deposit`). | Cập nhật Test #4 kiểm tra nạp đủ `10` đom đóm và xác minh điểm bằng `0` trước khi nạp, cộng `+100` (`10×10`) khi nạp. |
+| Test #5 (`dropped = Math.round(carried * 0.5)`, không có recoil/dropped motes) | Chuẩn hóa `dropped = floor(carried / 2)`, sinh đom đóm rơi (`kind: "dropped"`, TTL `480` tick), Bóng Mực vào trạng thái `recoil` lùi `2 m` trong `60` tick. | Mở rộng Test #5 xác minh `floor(5/2) = 2`, 2 đom đóm `dropped` có `ttl_s = 8`, và Bóng Mực chuyển `recoil`. |
+| Test #6 (`safe_radius = 5.0`) | Chuẩn hóa `safe_radius = 6.0` + đẩy Bóng Mực đang ở trong khi đèn mới thắp ra mép trong `<= 30` tick không gây sát thương. | Nâng cấp Test #6 kiểm tra đồng thời bóng ở trong (bị đẩy ra trong `<= 30` tick, `0` hit) và bóng ở ngoài bị chặn ở mép `6.0 m`. |
+| Test #7 (`pulse_cost = 2`, đẩy tức thì, `stun = 180` tick, `+25` điểm) | Chuẩn hóa `pulse_cost = 3`, bán kính 3D `5.0 m`, đẩy tổng `4.0 m` trong `15` tick đầu, choáng `120` tick, `+5` điểm. | Cập nhật Test #7 xác minh đủ 4 thông số mới và trạng thái `wander` cho bóng ngoài `12 m`. |
+
+## 3. Bảng truy vết Yêu cầu Phase 2 → Kiểm chứng → Bằng chứng
+
+| Hạng mục TICKET-02 | Cách kiểm chứng | Bằng chứng | Kết quả |
 |---|---|---|---|
-| Pure Simulation Core tách biệt 3D, đọc `tuning` từ `game.contract.json` | Build độc lập `dist/headless.js` không bundle Three.js/DOM + `tsc --noEmit` | `npm run build` (`dist/headless.js` = `28.4kb`) | **ĐẠT** |
-| Tính tất định byte-for-byte theo `--seed` | Chạy `dist/headless.js` 2 lần cùng `--seed 42 --ticks 600` và so sánh SHA-256 + Test #1 | `docs/proof/phase-1/determinism_run1.jsonl`, SHA-256 giống hệt nhau: `57C69BB1D7EC581C61A1CAC4B48A66F92603C8C8A6C1A1CB6A2B8460EB88A87B` | **ĐẠT** |
-| Thoát mã `2` khi `--inputs`/`--scenario` lỗi JSON, sai kiểu hoặc tick không tăng nghiêm ngặt | Test #2 trong `tests/contract.test.ts` (5 case lỗi + 1 case thiếu flag CLI) | Output `PASS 2. Exit code 2...` bên dưới | **ĐẠT** |
-| Di chuyển xoay `cam_yaw_deg` (`0°`, `90°`), chuẩn hóa vector `> 1`, nhảy cạnh lên | Test #3 trong `tests/contract.test.ts` | Output `PASS 3. Movement rotation...` bên dưới | **ĐẠT** |
-| Nhặt đom đóm, giới hạn `carry_capacity`, nạp đèn, thắp đèn, thắng `all_lit` & điểm thưởng | Test #4 & Test #10 trong `tests/contract.test.ts` | Output `PASS 4` & `PASS 10` bên dưới | **ĐẠT** |
-| Bóng Mực đuổi, va chạm (`player_hit`), rơi đom đóm, bất tử `invuln_s`, thua `no_flames` | Test #5 trong `tests/contract.test.ts` + log `determinism_run1.jsonl` (hit ở tick 505 & 595, cách đúng 90 tick = 1.5s) | Output `PASS 5` & `docs/proof/phase-1/determinism_run1.jsonl` | **ĐẠT** |
-| Vùng an toàn `safe_radius` của đèn sáng chặn Bóng Mực | Test #6 trong `tests/contract.test.ts` (300 tick, kiểm tra mọi snapshot `d >= 5.0` & 0 hit) | Output `PASS 6` bên dưới | **ĐẠT** |
-| Kỹ năng Tỏa sáng (Pulse): trừ ánh sáng, đẩy `pulse_push_m`, choáng `pulse_stun_s`, hồi chiêu `pulse_cooldown_s` | Test #7 trong `tests/contract.test.ts` | Output `PASS 7` bên dưới | **ĐẠT** |
-| Hết giờ Đêm 1 thua `dawn` | Test #8 trong `tests/contract.test.ts` (`time_left_s: 2.0` dừng đúng tick `120`) | Output `PASS 8` bên dưới | **ĐẠT** |
-| Scenario dựng sẵn `lit: true` không phát event, không cộng điểm | Test #9 trong `tests/contract.test.ts` | Output `PASS 9` bên dưới | **ĐẠT** |
-| Giao diện 3D Three.js (Đảo Bến, biển mây, Mây đội nón lá có đèn, 5 đèn sáng dần, HUD, Chơi lại) | Build production Vite (`npm run build:web`) + code review kết nối trực tiếp `SimulationEngine` | `dist/web/index.html` + `dist/web/assets/*` build thành công không lỗi | **ĐẠT** |
-| Tự động hóa kiểm chứng (CI) & Harness AI | `.github/workflows/ci.yml`, `AGENTS.md`, `.agents/skills/verify-contract/SKILL.md` | Có trong repo & lịch sử git | **ĐẠT** |
+| Contract `v1.1` & Số liệu chuẩn Phần 1 | `game.contract.json` + Test #1–#8 | `npm run verify` PASS 16/16 | **ĐẠT** |
+| Lướt (`dash`): `14 m/s`, `0.2 s`, hồi `1.5 s`, giữ Y trên không | Headless scenario Test #9 | `PASS 9. [Phase 2] Dash...` | **ĐẠT** |
+| Rơi khỏi đảo (`Y < -10`): `-1` lửa, `lost`, chờ `60` tick, hồi sinh + `90` tick bất tử | Headless scenario Test #10 | `PASS 10. [Phase 2] Fall off island...` | **ĐẠT** |
+| Đêm 2 — Đảo Cau: 2 đảo `28 m`, cầu tre, 2 Bục Nhảy, `6` đèn | Headless scenario Test #11 | `PASS 11. [Phase 2] Night 2 (Đảo Cau)...` | **ĐẠT** |
+| Bùa Gió (`C1`/`C2`): `7.2 m/s`, Lướt không hồi chiêu, hồi `2700` tick | Headless scenario Test #12 | `PASS 12. [Phase 2] Wind Charm...` | **ĐẠT** |
+| Gió Lạc (`D1`/`D2`): cướp `<= 3` khi mang `>= 5`, `flee`, Pulse làm rơi đồ | Headless scenario Test #13 | `PASS 13. [Phase 2] Drifter...` | **ĐẠT** |
+| Đêm 3 — Đảo Chuông: `7` đèn, 3 tầng, dốc, Bục Nhảy lên tầng 2, Gió mạnh | Headless scenario Test #14 | `PASS 14. [Phase 2] Night 3 (Đảo Chuông)...` | **ĐẠT** |
+| Tạm dừng (`pause` / `resumed`) đóng băng `sim_tick` & hồi chiêu | Headless scenario Test #15 | `PASS 15. [Phase 2] Pause & Resume...` | **ĐẠT** |
+| Hiệu năng headless 1 Đêm đầy đủ (`21,600` tick `<= 30 s`) | Benchmark Test #16 | **297 ms** (`0.297 s` << `30 s`) | **ĐẠT** |
+| Tính tất định byte-for-byte Đêm 3 (`1800` tick) | Chạy 2 lần `--seed 42 --night 3` so SHA-256 | `docs/proof/phase-2/night3_det1.jsonl`, SHA-256: `EFCD63864ED35B7F2582E0653EB60D4FD1FCD69923471E12B3E4DB4BC9DB437A` | **ĐẠT** |
+| Chuỗi 3 Đêm, Ông Đăng intro, Cài đặt `localStorage`, HUD 10 ô, Bảng màu chuẩn, Âm thanh, Menu chọn Nhân vật/Chủ đề/Loại ma | `npm run build:web` + `docs/SPEC_PHASE2.md` | Vite production build thành công (`1.45 s`), `tsc --noEmit` 0 lỗi | **ĐẠT** |
+| Harness AI & Spec Acceptance Criteria | Cập nhật `AGENTS.md`, `SKILL.md`, `docs/SPEC_PHASE2.md` | Có đủ trong repo & lịch sử git | **ĐẠT** |
 
----
+## 4. Log chạy kiểm thử thực tế (Phase 2)
 
-## 3. Log chạy kiểm thử thực tế
-
-### 3.1. Kết quả `npm run verify`
+### 4.1. Kết quả `npm run verify`
 
 ```text
 > dao-den-long@0.1.0 verify
@@ -49,71 +55,74 @@ Tài liệu bằng chứng kiểm chứng, các giả định kỹ thuật, đá
 > tsc --noEmit
 
 > esbuild src/sim/headless.ts --bundle --platform=node --format=esm --target=node20 --outfile=dist/headless.js
-  dist\headless.js  28.4kb
-Done in 6ms
+  dist\headless.js  62.1kb
+Done in 8ms
 
 > vite build
-✓ 11 modules transformed.
-dist/web/index.html                   4.75 kB │ gzip:   1.51 kB
-dist/web/assets/index-D6fVgyyZ.css    4.65 kB │ gzip:   1.57 kB
-dist/web/assets/index-BhAplL6l.js   507.17 kB │ gzip: 130.95 kB
-✓ built in 1.03s
+✓ 13 modules transformed.
+dist/web/index.html                   9.92 kB │ gzip:   2.78 kB
+dist/web/assets/index-DjpbaNSj.css   10.93 kB │ gzip:   2.91 kB
+dist/web/assets/index-CO37xcHW.js   579.74 kB │ gzip: 152.46 kB
+✓ built in 1.45s
 
-=== Test Contract v1.0 Suite (2A202603548-NgoDucThinh) ===
-PASS  1. Determinism (byte-for-byte identical output) & Snapshot/End schema
-PASS  2. Exit code 2 on invalid --inputs / --scenario (bad JSON, non-increasing tick, wrong types)
-PASS  3. Movement rotation (cam_yaw_deg = 0 & 90), vector normalization (>1), rising-edge jump
-PASS  4. Pickup motes -> deposit -> lantern_lit -> win (all_lit) & exact bonus score
-PASS  5. Shade chase -> player_hit (mote drop) -> invuln_s -> loss (no_flames)
-PASS  6. Shade cannot enter safe_radius of a lit lantern
-PASS  7. Pulse cost, pulse_push_m, stunned for pulse_stun_s, cooldown & empty pulse
-PASS  8. Dawn timeout loss (time_left_s <= 0 -> reason: dawn)
-PASS  9. Scenario pre-lit lanterns emit 0 events and add 0 score
-PASS  10. Carry capacity cap stops automatic mote pickup at carry_capacity
+=== Test Contract v1.1 Suite (2A202603548-NgoDucThinh) ===
+PASS  1. [Regression] Determinism (byte-for-byte) & Contract v1.1 Snapshot/End schema
+PASS  2. [Regression] Exit code 2 on invalid --inputs / --scenario
+PASS  3. [Regression] Movement rotation (cam_yaw_deg = 0 & 90), vector norm (>1), jump
+PASS  4. [Regression + v1.1 Score] Pickup 10 motes -> deposit (+10/mote deposited) -> win (all_lit)
+PASS  5. [Regression + v1.1 Recoil & Dropped Motes] Shade hit drops floor(carried/2) motes (TTL 480) & recoils 2m
+PASS  6. [Regression + v1.1 Safe Push] Safe radius (6m) blocks external shades & pushes interior shade out in <= 30 ticks
+PASS  7. [Regression + v1.1 Pulse 3D & 15-tick push] Pulse costs 3, pushes 4m over 15 ticks, stuns 120 ticks, +5 score
+PASS  8. [Regression] Dawn timeout loss & Pre-lit scenario emits 0 events / 0 score at tick 0
+PASS  9. [Phase 2] Dash (14 m/s for 0.2s, air-dash preserves Y, 1.5s cooldown from start)
+PASS  10. [Phase 2] Fall off island (Y < -10) -> -1 flame, lose all carried (lost), 60-tick wait, respawn + 90-tick invuln
+PASS  11. [Phase 2] Night 2 (Đảo Cau): 6 lanterns, Jump Pad launches Island A -> Island B, Wind Charm C1
+PASS  12. [Phase 2] Wind Charm: +7.2 m/s speed, 0-cooldown dash, respawns after 2700 ticks
+PASS  13. [Phase 2] Drifter (Gió Lạc): steals <= 3 motes when carried >= 5, flees, Pulse drops stolen motes
+PASS  14. [Phase 2] Night 3 (Đảo Chuông): 7 lanterns, 3 tiers + ramp + jump pad to Tier 2 + wind gust
+PASS  15. [Phase 2] Pause & Resume freeze sim_tick, time_left_s, cooldowns while outer tick advances
+      -> Full Night 3 (21,600 ticks) completed in 297 ms
+PASS  16. [Phase 2 Performance] Full Night 3 (21,600 ticks) finishes in <= 30s
 
-Summary: 10 passed, 0 failed
+Summary: 16 passed, 0 failed
 ```
 
-### 3.2. Bằng chứng tính tất định (SHA-256)
+### 4.2. Bằng chứng tính tất định Đêm 3 (SHA-256)
 
-Lệnh chạy:
-```powershell
-node dist/headless.js --seed 42 --night 1 --ticks 600 --snapshot-every 60 --out docs/proof/phase-1/determinism_run1.jsonl
-node dist/headless.js --seed 42 --night 1 --ticks 600 --snapshot-every 60 --out docs/proof/phase-1/determinism_run2.jsonl
-Get-FileHash docs/proof/phase-1/determinism_run1.jsonl, docs/proof/phase-1/determinism_run2.jsonl -Algorithm SHA256
-```
-
-Kết quả thực tế:
 ```text
 Hash                                                             Path
 ----                                                             ----
-57C69BB1D7EC581C61A1CAC4B48A66F92603C8C8A6C1A1CB6A2B8460EB88A87B ...\determinism_run1.jsonl
-57C69BB1D7EC581C61A1CAC4B48A66F92603C8C8A6C1A1CB6A2B8460EB88A87B ...\determinism_run2.jsonl
+EFCD63864ED35B7F2582E0653EB60D4FD1FCD69923471E12B3E4DB4BC9DB437A ...\docs\proof\phase-2\night3_det1.jsonl
+EFCD63864ED35B7F2582E0653EB60D4FD1FCD69923471E12B3E4DB4BC9DB437A ...\docs\proof\phase-2\night3_det2.jsonl
 ```
 
-File mẫu được giữ lại tại [`docs/proof/phase-1/determinism_run1.jsonl`](docs/proof/phase-1/determinism_run1.jsonl).
+## 5. Đánh giá Phase 2, Lỗi AI phát hiện & Nhật ký Token
+
+### 5.1. Đánh giá nhanh Phase 2
+- **Đạt:** Toàn bộ số liệu chuẩn Phần 1, 3 bản đồ chuẩn Phần 2, toàn bộ tính năng Phần 3 (kèm sáng tạo sảnh chọn nhân vật/chủ đề/loại ma) và Contract v1.1 đều chạy đúng, 16/16 test PASS, hiệu năng headless vượt trội (`297 ms` cho `21,600` tick).
+- **Chưa làm / Hạn chế hiện tại:** Chưa quay video demo `.mp4` và chưa chạy đo FPS tự động trên trình duyệt headless (đã gắn bộ đếm FPS trực tiếp trên HUD; đo đạc hiệu năng chính thức sẽ thực hiện ở Phase 4).
+
+### 5.2. Lỗi AI đã phát hiện & cách khắc phục (Phase 2)
+1. **Test #16 kết thúc sớm ở tick `17,926`:** Kịch bản benchmark đặt `flames: 99`, không đủ cho người chơi đứng yên sống sót đủ `21,600` tick trước `10` Bóng Mực (tối đa `240` đòn).
+   - *Phát hiện:* Ngay lần chạy `npm test` đầu tiên (`17926 !== 21600`).
+   - *Khắc phục:* Tăng `flames: 500` trong kịch bản benchmark để đảm bảo chạy đủ trọn `21,600` tick (`297 ms`).
+2. **Biến thừa `currentNight` trong `src/web/renderer.ts`:** Bị TypeScript `noUnusedLocals` (`TS6133`) bắt ngay khi chạy `npm run typecheck`.
+   - *Khắc phục:* Gỡ bỏ trường thừa, giữ code gọn sạch.
+3. **Phòng ngừa sai quy ước góc XZ & điểm rơi Đêm 3:** Đối chiếu chéo công thức góc với Đêm 3 Tầng 1 (`z > 0`, dốc `30°/150°`) để xác nhận `x = r cos α, z = r sin α` trước khi code `src/sim/maps.ts`.
+
+### 5.3. Nhật ký dùng AI & Quản lý Token (Phase 2)
+- **Công cụ:** Antigravity (Google DeepMind).
+- **Ước tính token Phase 2:** ~70,000–85,000 tokens (phân tích TICKET-02, tách `src/sim/maps.ts`, viết lại `engine.ts` theo đúng 12 bước + bộ đếm tick nguyên, 16 test tự động, nâng cấp 3D Renderer cho cả 3 đảo + menu chọn nhân vật/chủ đề/loại ma + âm thanh & tài liệu).
+- **Cách tiết kiệm token:**
+  - Dùng bộ đếm số nguyên (integer ticks) trong `engine.ts` giúp tránh lỗi sai số dấu phẩy động và giảm số vòng debug.
+  - Chạy `npm test` xác nhận toàn bộ lõi mô phỏng v1.1 PASS trước khi nâng cấp `src/web/`.
+  - Gộp ghi nhiều file độc lập song song theo từng lớp kiến trúc.
 
 ---
 
-## 4. Đánh giá Phase 1, Lỗi AI & Nhật ký Token
+# PHASE 1 — Lưu trữ tóm tắt (Tag `phase-1` · Contract v1.0)
 
-### 4.1. Đánh giá nhanh Phase 1
-- **Đạt:** 100% yêu cầu lõi Phase 1 và Test Contract v1.0 đều có test tự động và bằng chứng thực tế. Lõi mô phỏng chạy độc lập hoàn toàn (`28.4kb`), build web 3D Three.js nhanh (`~1s`), không phụ thuộc asset ngoài.
-- **Chưa làm / Hạn chế hiện tại:** Chưa quay video demo (dự kiến thực hiện ở Phase 4) và chưa chạy test hiệu năng FPS chuyên sâu (chưa thuộc yêu cầu Phase 1).
-
-### 4.2. Các lỗi kỹ thuật / lỗi AI đã phát hiện & cách xử lý
-1. **Lỗi cấu hình TypeScript `TS5097`:** Khi dùng đuôi `.ts` trong import ESM (`src/sim/engine.ts`), `tsc --noEmit` báo lỗi do thiếu `"allowImportingTsExtensions": true` trong `tsconfig.json`.
-   - *Phát hiện:* Ngay khi chạy `npm run typecheck`.
-   - *Khắc phục:* Bật `"allowImportingTsExtensions": true` trong `tsconfig.json` và chạy lại `typecheck` + `test` xác nhận xanh.
-2. **Phòng ngừa lỗi trục camera phải/trái trong Three.js:** Kiểm tra trước quy tắc bàn tay phải (`Forward +Z × Up +Y = Right -X`) nên ánh xạ `A -> mx=+1`, `D -> mx=-1` khớp chính xác công thức xoay `cam_yaw_deg` của Test Contract ở mọi góc xoay.
-3. **Phòng ngừa sai số làm tròn `safe_radius`:** Bổ sung lề `SAFE_RADIUS_MARGIN = 0.002m` để đảm bảo tọa độ sau khi làm tròn 3 chữ số thập phân không bao giờ nhỏ hơn `5.0m` theo đường chéo.
-4. **Cải tiến Harness:** Đưa lệnh `npm run verify` làm cổng bắt buộc trong `AGENTS.md`, tách quy trình kiểm chứng thành skill `.agents/skills/verify-contract/SKILL.md` và thêm GitHub Actions CI `.github/workflows/ci.yml`.
-
-### 4.3. Nhật ký dùng AI & Quản lý Token (Phase 1)
-- **Công cụ:** Antigravity (Google DeepMind).
-- **Ước tính token Phase 1:** ~45,000–60,000 tokens (đọc 7 tài liệu spec, thiết kế & tạo toàn bộ lõi sim, 10 test contract, giao diện 3D Three.js + WebAudio, tài liệu & kiểm chứng).
-- **Cách tiết kiệm token đã áp dụng:**
-  - Đọc song song toàn bộ tài liệu trong 1 lượt và lập kế hoạch kiến trúc đầy đủ trước khi viết code.
-  - Gộp ghi nhiều file độc lập song song theo từng bước (Config/Harness → Sim Core → Test Suite → 3D Frontend → Docs) thay vì chỉnh sửa lắt nhắt.
-  - Giữ `AGENTS.md` ngắn gọn (~35 dòng) và tách thủ tục kiểm chứng chi tiết sang skill `.agents/skills/verify-contract/SKILL.md` để chỉ nạp khi cần.
-  - Chạy `npm test` kiểm chứng lõi trước khi viết 3D, tránh phải sửa đi sửa lại ở nhiều tầng.
+- **Kết quả Phase 1:** `npm run verify` PASS `10/10` Test Contract v1.0 (`dist/headless.js` = `28.4kb`).
+- **Determinism Phase 1 (`--seed 42 --night 1 --ticks 600`):** SHA-256 giống hệt nhau `57C69BB1D7EC581C61A1CAC4B48A66F92603C8C8A6C1A1CB6A2B8460EB88A87B` (lưu tại [`docs/proof/phase-1/determinism_run1.jsonl`](docs/proof/phase-1/determinism_run1.jsonl)).
+- **Lỗi AI đã khắc phục ở Phase 1:** Bật `allowImportingTsExtensions` cho `TS5097`; đối chiếu quy tắc bàn tay phải cho trục camera Three.js; bổ sung lề `0.002 m` cho `safe_radius` chống sai số làm tròn 3 chữ số thập phân.
+- **Ước tính token Phase 1:** ~45,000–60,000 tokens.

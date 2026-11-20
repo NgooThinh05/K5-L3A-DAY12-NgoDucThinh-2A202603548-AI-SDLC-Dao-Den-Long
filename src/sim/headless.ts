@@ -6,6 +6,7 @@ import {
   createDefaultInput,
   type GameContract,
   type InputsFile,
+  type NightNumber,
   type ScenarioFile,
 } from './types.ts';
 import {
@@ -16,7 +17,7 @@ import {
 
 interface CliArgs {
   seed: number;
-  night: number;
+  night: NightNumber;
   ticks: number;
   out: string;
   snapshotEvery: number;
@@ -78,12 +79,22 @@ function parseCliArgs(argv: string[]): CliArgs {
 
   if (seed === undefined) throw new Error('Missing required flag: --seed');
   if (night === undefined) throw new Error('Missing required flag: --night');
-  if (night !== 1) throw new Error(`Unsupported --night value: ${night} (Phase 1 supports night 1)`);
+  if (night !== 1 && night !== 2 && night !== 3) {
+    throw new Error(`Unsupported --night value: ${night} (Contract v1.1 supports 1, 2, or 3)`);
+  }
   if (ticks === undefined || ticks < 0) throw new Error('Missing or invalid required flag: --ticks (>= 0)');
   if (!out) throw new Error('Missing required flag: --out');
   if (snapshotEvery <= 0) throw new Error('--snapshot-every must be a positive integer');
 
-  return { seed, night, ticks, out, snapshotEvery, scenarioPath, inputsPath };
+  return {
+    seed,
+    night: night as NightNumber,
+    ticks,
+    out,
+    snapshotEvery,
+    scenarioPath,
+    inputsPath,
+  };
 }
 
 function loadContract(): GameContract {
@@ -189,6 +200,7 @@ function main(): void {
       if (f.interact !== undefined) stickyInput.interact = f.interact;
       if (f.pulse !== undefined) stickyInput.pulse = f.pulse;
       if (f.dash !== undefined) stickyInput.dash = f.dash;
+      if (f.pause !== undefined) stickyInput.pause = f.pause;
     }
 
     const res = engine.step(stickyInput);
@@ -198,7 +210,7 @@ function main(): void {
     if (res.tick % args.snapshotEvery === 0) {
       lines.push(JSON.stringify(engine.getSnapshot()));
     }
-    if (res.state !== 'playing') {
+    if (res.state === 'won' || res.state === 'lost') {
       break;
     }
   }
